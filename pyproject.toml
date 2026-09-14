@@ -1,84 +1,86 @@
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "baby"
 version = "0.1.0"
-description = "BABY: Personal AI Operating System / AI Control Center"
-authors = [
-    {name = "kuij-i", email = ""}
-]
+description = "Baby: Personal AI Operating System / AI Control Center"
 readme = "README.md"
-requires-python = ">=3.11"
-license = "MIT"
-keywords = ["ai", "orchestrator", "agents", "platform"]
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "kuij-i"}]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development :: Libraries :: Application Frameworks",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
 dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
     "python-dotenv>=1.0",
-    "typing-extensions>=4.0",
-    "pyyaml>=6.0",
+    "structlog>=23.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0",
+    "pytest>=7.4",
     "pytest-asyncio>=0.21",
-    "pytest-cov>=4.0",
+    "pytest-cov>=4.1",
     "black>=23.0",
     "ruff>=0.1",
-    "mypy>=1.0",
-    "isort>=5.0",
+    "mypy>=1.6",
+    "isort>=5.12",
 ]
 
-models = [
-    "openai>=1.0",
-    "anthropic>=0.7",
+test = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.1",
 ]
 
-tools = [
-    "PyGithub>=2.0",
-]
-
-web = [
-    "fastapi>=0.100",
-    "uvicorn>=0.23",
-]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["baby*"]
 
 [tool.black]
-line-length = 100
-target-version = ['py311']
+line-length = 120
+target-version = ["py310", "py311", "py312"]
 
 [tool.ruff]
-line-length = 100
-target-version = "py311"
-select = ["E", "F", "W", "I", "UP", "PIE"]
-ignore = ["E501", "W605"]
+line-length = 120
+target-version = "py310"
+select = ["E", "F", "W", "I"]
+exclude = [".venv", "venv", "build", "dist"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
 
 [tool.isort]
 profile = "black"
-line_length = 100
-
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-no_implicit_optional = true
-strict = true
+line_length = 120
 
 [tool.pytest.ini_options]
+minversion = "7.0"
 testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --strict-markers --tb=short"
 asyncio_mode = "auto"
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow running tests",
+]
