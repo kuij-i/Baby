@@ -62,6 +62,7 @@ class ToolExecutor:
 
             # 2. Check permissions
             approval_required_permissions: list[str] = []
+            action_fingerprint = approval_manager.fingerprint_action(kwargs)
             for required_perm in tool.permissions_required:
                 try:
                     level = permission_manager.check_permission(agent_id_str, required_perm)
@@ -119,6 +120,7 @@ class ToolExecutor:
                             f"{', '.join(sorted(approval_required_permissions))}"
                         ),
                         risk_level=self._approval_risk_level(approval_required_permissions),
+                        action_fingerprint=action_fingerprint,
                         user_id=user_id,
                     )
                     raise ApprovalRequiredError(f"Approval required for {tool.name}: request_id={request.request_id}")
@@ -127,6 +129,7 @@ class ToolExecutor:
                     task_id=task_id,
                     agent_id=agent_id,
                     action_type=tool.name,
+                    action_fingerprint=action_fingerprint,
                 )
 
             # 3. Record tool invocation

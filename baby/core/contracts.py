@@ -185,6 +185,7 @@ class ApprovalRequest(BaseModel):
     action_type: str = Field(..., min_length=1)
     reason: str = Field(..., min_length=1)
     risk_level: str = Field(...)  # low, medium, high, critical
+    action_fingerprint: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     requires_approval: bool = True
     approved: Optional[bool] = None

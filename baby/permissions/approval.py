@@ -1,5 +1,8 @@
 """Approval workflow management for high-risk actions."""
 
+import hashlib
+import json
+
 from baby.audit import audit_log
 from baby.core import AgentId, ApprovalRequest, AuditEventType, TaskId
 from baby.core.contracts import utc_now
@@ -20,6 +23,7 @@ class ApprovalManager:
         action_type: str,
         reason: str,
         risk_level: str,
+        action_fingerprint: str,
         user_id: str | None = None,
     ) -> ApprovalRequest:
         """Create and audit a new approval request."""
@@ -28,6 +32,7 @@ class ApprovalManager:
                 existing_request.task_id == task_id
                 and existing_request.agent_id == agent_id
                 and existing_request.action_type == action_type
+                and existing_request.action_fingerprint == action_fingerprint
                 and existing_request.approved is None
             ):
                 return existing_request
@@ -38,6 +43,7 @@ class ApprovalManager:
             action_type=action_type,
             reason=reason,
             risk_level=risk_level,
+            action_fingerprint=action_fingerprint,
         )
         self._requests[str(request.request_id)] = request
         audit_log.record(
@@ -50,6 +56,7 @@ class ApprovalManager:
                 "action_type": action_type,
                 "risk_level": risk_level,
                 "reason": reason,
+                "action_fingerprint": action_fingerprint,
             },
         )
         return request
@@ -93,10 +100,16 @@ class ApprovalManager:
         task_id: TaskId | None,
         agent_id: AgentId,
         action_type: str,
+        action_fingerprint: str,
     ) -> ApprovalRequest:
         """Require a matching, explicitly approved request."""
         request = self.get_request(request_id)
-        if request.task_id != task_id or request.agent_id != agent_id or request.action_type != action_type:
+        if (
+            request.task_id != task_id
+            or request.agent_id != agent_id
+            or request.action_type != action_type
+            or request.action_fingerprint != action_fingerprint
+        ):
             raise ApprovalDeniedError("Approval request does not match the requested action")
         if request.approved is True:
             return request
@@ -107,6 +120,29 @@ class ApprovalManager:
     def clear(self) -> None:
         """Clear requests for tests."""
         self._requests.clear()
+
+    @staticmethod
+    def fingerprint_action(payload: dict[str, object]) -> str:
+        """Return a deterministic fingerprint for approval-scoped action input."""
+
+        def normalize(value: object) -> object:
+            if value is None or isinstance(value, (str, int, float, bool)):
+                return value
+            if isinstance(value, dict):
+                return {str(key): normalize(nested_value) for key, nested_value in sorted(value.items())}
+            if isinstance(value, (list, tuple)):
+                return [normalize(item) for item in value]
+            if isinstance(value, set):
+                normalized_items = [normalize(item) for item in value]
+                return sorted(normalized_items, key=lambda item: json.dumps(item, sort_keys=True))
+            model_dump = getattr(value, "model_dump", None)
+            if callable(model_dump):
+                return normalize(model_dump(mode="json"))
+            return str(value)
+
+        normalized = normalize(payload)
+        encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 approval_manager = ApprovalManager()

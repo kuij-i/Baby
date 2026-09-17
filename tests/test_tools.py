@@ -414,6 +414,44 @@ class TestToolExecutor:
         assert len(audit_log.get_events(task_id=task_id, event_type=AuditEventType.APPROVAL_REQUESTED)) == 1
 
     @pytest.mark.asyncio
+    async def test_execute_creates_distinct_requests_for_distinct_inputs(self) -> None:
+        """Test high-risk inputs are approval-scoped, not just tool-scoped."""
+        permission = ToolPermission(
+            category=PermissionCategory.FINANCIAL_ACTION,
+            level=PermissionLevel.ALLOW,
+            description="Trading action",
+        )
+        task_id = TaskId()
+        tool = self.create_tool(permission, name="trade-tool")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.FINANCIAL_ACTION,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Trading requires approval",
+            ),
+        )
+
+        with pytest.raises(ApprovalRequiredError, match="request_id=") as first_error:
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                task_id=task_id,
+                user_id="user-1",
+                amount=1,
+            )
+        with pytest.raises(ApprovalRequiredError, match="request_id=") as second_error:
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                task_id=task_id,
+                user_id="user-1",
+                amount=2,
+            )
+
+        assert str(first_error.value).split("request_id=")[1] != str(second_error.value).split("request_id=")[1]
+
+    @pytest.mark.asyncio
     async def test_execute_with_approved_request_succeeds(self) -> None:
         """Test explicit approval allows tool execution."""
         permission = ToolPermission(
@@ -541,6 +579,7 @@ class TestToolExecutor:
             action_type="trade-tool",
             reason="Need approval",
             risk_level="critical",
+            action_fingerprint=approval_manager.fingerprint_action({"amount": 1}),
         )
         approval_manager.decide(str(request.request_id), approved=False, user_id="approver-1")
 
