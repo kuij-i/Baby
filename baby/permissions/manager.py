@@ -91,6 +91,9 @@ class PermissionManager:
         if granted is None:
             raise PermissionDeniedError(f"Agent {agent_id} lacks {required_permission.category.value} permission")
 
+        if granted.level == PermissionLevel.DENY:
+            raise PermissionDeniedError(f"Agent {agent_id} is denied {required_permission.category.value} permission")
+
         return granted.level
 
     def get_agent_permissions(self, agent_id: str) -> List[ToolPermission]:

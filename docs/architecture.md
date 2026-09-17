@@ -2,405 +2,160 @@
 
 ## Overview
 
-Baby is a personal AI operating system designed to coordinate multiple specialist AI agents with strong governance, permission controls, and audit logging. The architecture emphasizes:
+Baby is a modular AI control plane with explicit boundaries between planning, execution, verification, memory, and audit.
 
-- **Modular design** with clear separation of concerns
-- **Type safety** through strong contracts
-- **Security by default** with permission controls
-- **Auditability** of all meaningful actions
-- **Extensibility** to support new agent types and tools
-- **No unrestricted autonomous execution**
-
-## Core Architecture
-
-### Layered Orchestration
-
-```
+```text
 USER TASK
-    ↓
-BABY ORCHESTRATOR (Task acceptance, routing, coordination)
-    ↓
-PLANNER (Decompose task into steps)
-    ↓
-ROUTER (Select appropriate specialist agent(s))
-    ↓
-SPECIALIST AGENT (Execute step with tools)
-    ↓
-TOOLS (Abstracted tool execution)
-    ↓
-VERIFICATION (Validate results)
-    ↓
-MEMORY (Store learnings)
-    ↓
-AUDIT LOG (Record all actions)
-    ↓
-FINAL RESPONSE
+  → ORCHESTRATOR
+  → PLANNER
+  → ROUTER / SELECTION
+  → SPECIALIST AGENT
+  → SAFE TOOLS
+  → VERIFICATION
+  → MEMORY
+  → AUDIT
+  → RESPONSE
 ```
 
-### Core Components
-
-#### 1. Orchestrator
-
-The heart of BABY. Responsibilities:
-- Receive and validate tasks
-- Invoke the planner
-- Coordinate agent execution
-- Check permissions before execution
-- Handle approvals
-- Manage execution context
-- Coordinate verification
-- Record audit events
-- Return results to user
-
-#### 2. Planner
-
-Decomposes tasks into executable steps.
-- Analyze task requirements
-- Determine step sequence
-- Identify dependencies
-- Flag approval-required steps
-- Produce structured Plan
-
-#### 3. Router
-
-Matches tasks/steps to appropriate agents.
-- Analyze step requirements
-- Match against agent capabilities
-- Check agent availability
-- Consider resource constraints
-- Return agent selection
-
-#### 4. Specialist Agents
-
-Domain-specific AI agents:
-- **Coding Agent** - Software development tasks
-- **Trading Agent** - Financial analysis and trading
-- **Copywriting Agent** - Content creation and editing
-- **Testing Agent** - QA and test automation
-- **Cybersecurity Agent** - Security assessment and remediation
-
-Each agent:
-- Has explicit capabilities
-- Has explicit permissions
-- Uses approved tools only
-- Produces auditable results
-- Reports execution metadata
-
-#### 5. Tool System
-
-Abstraction layer for all agent capabilities.
-
-**Tool Abstraction:**
-- Name and description
-- Input/output schemas
-- Required permissions
-- Timeout and retry settings
-- Risk level
-- Audit metadata
-
-**Not Direct Shell Access:**
-- No unrestricted `exec()` or `subprocess.run()`
-- Tools defined as specifications
-- Tool registry for all available tools
-- Permission checking before invocation
-
-#### 6. Permission System
-
-Granular access control.
-
-**Permission Categories:**
-- `READ_ONLY` - Read file system
-- `LOCAL_READ` - Read local data
-- `LOCAL_WRITE` - Write local data
-- `EXECUTE_COMMAND` - Execute shell commands
-- `NETWORK_ACCESS` - Network communication
-- `EXTERNAL_API` - Third-party APIs
-- `GITHUB_READ` - GitHub read access
-- `GITHUB_WRITE` - GitHub write access
-- `FINANCIAL_ACTION` - Trading and financial transactions
-- `SECURITY_ACTION` - Security operations
-- `DESTRUCTIVE_ACTION` - Delete/destroy operations
-- `SECRET_ACCESS` - Access credentials/secrets
-
-**Permission Decisions:**
-- `ALLOW` - Granted
-- `DENY` - Denied
-- `APPROVAL_REQUIRED` - Requires explicit user approval
-
-**Authorization Flow:**
-```
-Agent wants to use Tool
-        ↓
-Orchestrator checks: Does agent have permission?
-        ↓
-Permission level: ALLOW? → Execute
-                 DENY? → Reject
-                 APPROVAL_REQUIRED? → Send to user for approval
-```
-
-#### 7. Verification Layer
-
-Validates agent output before accepting results.
-
-**Verification Strategies:**
-- Schema validation
-- Test execution (for code)
-- Expected output validation
-- Range/constraint checking
-- Integration tests
-- Security checks
-
-#### 8. Memory System
-
-Central knowledge storage.
-
-**Memory Types:**
-- **Conversation Context** - Current task session
-- **Long-term Preferences** - User preferences, agent configurations
-- **Project Memory** - Project-specific context
-- **Agent Memory** - Agent-specific learnings
-- **Factual Memory** - Shared knowledge base
-- **Decision Memory** - Previous decisions and reasoning
-- **Task History** - Completed tasks and outcomes
-- **Execution History** - Tool execution results
-
-**Storage:**
-- Initially SQLite
-- Interface-based for later backend replacement
-
-#### 9. Audit System
-
-Complete audit trail of all actions.
-
-**Audit Events:**
-- Task created
-- Plan created
-- Agent selected
-- Permission checked
-- Tool invoked
-- Tool result recorded
-- Approval requested
-- Approval granted/denied
-- Artifact created
-- Verification completed
-- Task completed/failed
-- Errors
-
-**Audit Properties:**
-- Immutable log
-- Timestamp on every event
-- User attribution
-- Task/Agent attribution
-- Full context
-- Never log secrets
-
-## Core Contracts
-
-All components communicate through strongly typed contracts (Pydantic models):
-
-- **TaskId** - Unique task identifier
-- **AgentId** - Unique agent identifier
-- **Task** - User task definition
-- **AgentSpec** - Agent configuration and capabilities
-- **AgentCapability** - Agent capability definition
-- **Plan** - Structured plan for task execution
-- **PlanStep** - Single executable step
-- **ExecutionContext** - Context for step execution
-- **ToolSpec** - Tool specification
-- **ToolPermission** - Tool permission definition
-- **AgentResult** - Agent execution result
-- **VerificationResult** - Verification outcome
-- **Artifact** - Created asset
-- **MemoryRecord** - Memory storage
-- **ApprovalRequest** - Approval workflow
-- **AuditEvent** - Audit trail entry
-
-## Specialist Teams
-
-### Coding Team
-
-Responsibilities:
-- Code review
-- Architecture design
-- Implementation
-- Testing
-- Documentation
-- Debugging
-- Performance optimization
-
-Roles:
-- Software Architect
-- Backend Engineer
-- Frontend Engineer
-- Database Engineer
-- DevOps Engineer
-- Debugger
-- Code Reviewer
-- Documentation Engineer
-
-### Trading Team
-
-Responsibilities:
-- Market research
-- Technical analysis
-- Fundamental analysis
-- Strategy development
-- Backtesting
-- Risk management
-- Portfolio management
-- Execution
-- Trading journal
-
-**Critical:** Analysis is separated from execution. Live trading is disabled by default and requires explicit approval.
-
-### Copywriting Team
-
-Responsibilities:
-- Research
-- Strategy
-- Writing
-- Editing
-- SEO optimization
-- Fact checking
-- Brand voice management
-
-### Testing Team
-
-Responsibilities:
-- Unit testing
-- Integration testing
-- End-to-end testing
-- Regression testing
-- Performance testing
-- Security testing
-- Test planning
-- Test reporting
-
-### Cybersecurity Team
-
-Responsibilities:
-- Security assessment
-- Vulnerability identification
-- Exploitation (authorized only)
-- Defensive remediation
-- Security reporting
-
-**Critical Security Constraint:** Only operate on authorized targets with explicit scope and approval.
-
-## Execution Flow Example
-
-```
-1. USER submits task:
-   "Implement OAuth2 authentication for the API"
-
-2. ORCHESTRATOR receives task
-   - Creates Task object
-   - Records audit: TASK_CREATED
-   - Invokes Planner
-
-3. PLANNER decomposes:
-   - Step 1: Design auth architecture
-   - Step 2: Implement OAuth2 provider
-   - Step 3: Add user model
-   - Step 4: Write tests
-   - Step 5: Code review
-   - Step 6: Integration testing
-   - Records audit: PLAN_CREATED
-
-4. For each step:
-   a. ORCHESTRATOR selects agent
-      - Step 1,5 → Code Architect
-      - Step 2,3 → Backend Engineer
-      - Step 4 → Testing Engineer
-      - Records audit: AGENT_SELECTED
-
-   b. ORCHESTRATOR checks permissions
-      - Agent needs: GITHUB_READ, LOCAL_WRITE, EXECUTE_COMMAND
-      - Checks permission database
-      - Records audit: PERMISSION_CHECKED
-
-   c. ORCHESTRATOR routes to agent with execution context
-
-   d. AGENT executes with tools
-      - Uses available tools within permissions
-      - Records execution metadata
-      - Returns AgentResult
-      - Records audit: TOOL_INVOKED, TOOL_RESULT
-
-   e. VERIFICATION layer validates
-      - Run tests for code
-      - Validate schema
-      - Check constraints
-      - Records audit: VERIFICATION_COMPLETED
-
-   f. MEMORY stores relevant information
-      - Decision: Why this architecture
-      - Fact: User prefers FastAPI
-      - History: Implementation completed
-
-5. After all steps:
-   - Collect all results
-   - Records audit: TASK_COMPLETED
-   - Return to user
-```
-
-## Non-Functional Requirements
-
-### Security
-- No secrets in code
-- All permissions checked
-- Audit trail for compliance
-- Rate limiting where appropriate
-- Timeout protection
-- Resource limits per agent
-
-### Reliability
-- Graceful error handling
-- Retry mechanisms for transient failures
-- Clear error messages
-- Task resumption capability
-
-### Performance
-- Async/await for I/O
-- Caching where appropriate
-- Resource pooling
-- Monitoring and metrics
-
-### Maintainability
-- Clean code principles
-- Comprehensive tests
-- Clear documentation
-- Modular design
-- No tight coupling
-
-## Design Decisions
-
-### Why Not Microservices?
-
-Currently monolithic. Microservices introduce complexity without current demand. If components need independent scaling or separate deployment, can refactor then.
-
-### Why Not Multi-Agent Autonomous Loops?
-
-All actions have boundaries. Every execution has explicit approval points and human oversight. No silent autonomous actions.
-
-### Why Pydantic for Contracts?
-
-Strong validation, serialization, type hints, and ecosystem integration. Helps catch errors at system boundaries.
-
-### Why SQLite Initially?
-
-Simple, file-based, no infrastructure, sufficient for MVP. Can migrate to PostgreSQL when needed without changing application layer (interface-based).
-
-### Why Structured Logging?
-
-Machine-readable logs, better for parsing and analysis, easier to ship to log aggregation systems later.
-
-## Future Considerations
-
-- Multi-user support and authentication
-- Web/desktop UI
-- Advanced memory (embeddings, vector DB)
-- More specialist teams
-- External model providers
-- Distributed execution
-- Advanced permission delegation
+The current repository implements a deterministic vertical slice of this design, including a secure Coding Agent.
+
+## Implemented Components
+
+### Core contracts
+
+`baby/core/contracts.py` defines the typed contracts shared across the system:
+
+- `Task`
+- `Plan` / `PlanStep`
+- `ExecutionContext`
+- `AgentSpec` / `AgentResult`
+- `ToolSpec` / `ToolPermission`
+- `VerificationResult`
+- `ApprovalRequest`
+- `MemoryRecord`
+- `AuditEvent`
+
+Contracts currently use timezone-aware UTC timestamps.
+
+### Agents
+
+`baby/agents/` contains:
+
+- `Agent` base class
+- `AgentRegistry`
+- `CodingAgent`
+
+The Coding Agent is intentionally narrow. It executes only allow-listed, repository-bounded coding tools and does not expose arbitrary shell or network capabilities.
+
+### Planning and selection
+
+`baby/planning/` provides:
+
+- `TaskPlanner` for step creation
+- `SelectionLogic` for agent/tool selection
+
+Coding tasks are identified through task metadata and routed through the existing planner/selection path rather than bypassing orchestration.
+
+### Orchestration
+
+`baby/orchestration/orchestrator.py` coordinates:
+
+- task audit creation
+- plan creation
+- dependency validation
+- dependency failure handling
+- `previous_results` propagation to dependent steps
+- agent execution
+- deterministic verification
+- minimal safe memory storage
+- completion/failure audit events
+
+The orchestrator rejects invalid dependency references and circular step dependencies.
+
+### Permissions and approvals
+
+`baby/permissions/` contains:
+
+- `PermissionManager`
+- `ApprovalManager`
+
+Tool execution has three real outcomes:
+
+- `ALLOW`
+- `DENY`
+- `APPROVAL_REQUIRED`
+
+Approval-required actions stop until an explicit approval decision is recorded.
+
+### Tools
+
+`baby/tools/` contains:
+
+- `Tool` base class
+- `ToolRegistry`
+- `ToolExecutor`
+- repository-bounded coding tools
+
+Current built-in safe coding tools:
+
+- `repository_list_files`
+- `repository_read_file`
+- `repository_write_file`
+
+These tools validate inputs, enforce permission checks, record audit events, and stay inside a configured repository root.
+
+### Verification
+
+`baby/verification/` contains deterministic verification that inspects `AgentResult` objects and produces typed `VerificationResult` records.
+
+The current verifier checks:
+
+- execution success/failure consistency
+- step/result alignment
+- coding-tool allow-list usage
+- coding-tool output shape
+- basic path existence for verified repository operations
+
+### Memory
+
+`baby/memory/` provides a replaceable `MemoryStore` interface and an `InMemoryStore` implementation.
+
+Current orchestration stores only minimal safe summaries for verified coding actions:
+
+- tool name
+- repository paths
+- dependency references used
+
+Source contents and secrets are not automatically persisted.
+
+### Audit
+
+`baby/audit/` provides an in-memory audit log used across orchestration, approvals, and tool execution.
+
+Important events include:
+
+- task created
+- plan created
+- agent selected
+- permission checked
+- approval requested / granted / denied
+- tool invoked / tool result
+- verification completed
+- task completed / failed
+- error
+
+## Current Limitations
+
+Deliberately not implemented in this milestone:
+
+- LLM-backed planning or code synthesis
+- unrestricted execution tools
+- durable memory or audit persistence
+- UI-mediated approval flows
+- vector memory / embeddings
+- live trading execution
+- additional specialist-agent teams
+
+## Recommended Next Milestone
+
+Expand the coding vertical slice with additional safe repository operations and richer deterministic verification while keeping the same planner, approval, memory, and audit boundaries.

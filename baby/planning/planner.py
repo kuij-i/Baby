@@ -1,11 +1,18 @@
 """Task planner for decomposing tasks into executable steps."""
 
-from typing import List
+from typing import Any, List
 
-from baby.core import Plan, PlanStep, Task
+from baby.agents import CODING_AGENT_ID
+from baby.core import AgentId, Plan, PlanStep, Task
 from baby.logging import get_logger
 
 logger = get_logger(__name__)
+
+CODING_OPERATIONS = {
+    "list_files": "repository_list_files",
+    "read_file": "repository_read_file",
+    "write_file": "repository_write_file",
+}
 
 
 class TaskPlanner:
@@ -52,15 +59,53 @@ class TaskPlanner:
         Returns:
             List of plan steps
         """
-        # MVP: Single step to execute task
-        # Production: Use LLM to create multi-step plans
+        if self._is_coding_task(task):
+            operation = str(task.metadata.get("operation", "list_files"))
+            tool_name = CODING_OPERATIONS.get(operation)
+            tool_input = self._extract_tool_input(task.metadata)
+            return [
+                PlanStep(
+                    step_id=1,
+                    description=task.description,
+                    agent_id=AgentId(id=CODING_AGENT_ID),
+                    tool_name=tool_name,
+                    approval_required=task.priority >= 8 or operation == "write_file",
+                    metadata={
+                        "domain": "coding",
+                        "operation": operation,
+                        "tool_input": tool_input,
+                    },
+                )
+            ]
+
         return [
             PlanStep(
                 step_id=1,
                 description=task.description,
-                approval_required=task.priority >= 8,  # High priority needs approval
+                approval_required=task.priority >= 8,
             )
         ]
+
+    @staticmethod
+    def _is_coding_task(task: Task) -> bool:
+        if task.metadata.get("domain") == "coding":
+            return True
+
+        haystack = f"{task.title} {task.description}".lower()
+        return any(keyword in haystack for keyword in ("code", "file", "bug", "refactor", "implement"))
+
+    @staticmethod
+    def _extract_tool_input(metadata: dict[str, Any]) -> dict[str, Any]:
+        tool_input = metadata.get("tool_input")
+        if isinstance(tool_input, dict):
+            return dict(tool_input)
+
+        extracted: dict[str, Any] = {}
+        for key in ("path", "content"):
+            value = metadata.get(key)
+            if isinstance(value, str):
+                extracted[key] = value
+        return extracted
 
 
 # Global planner instance

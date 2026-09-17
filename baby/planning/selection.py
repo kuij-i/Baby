@@ -3,6 +3,7 @@
 from typing import List, Optional
 
 from baby.agents import agent_registry
+from baby.agents.coding import CODING_AGENT_ID, CODING_CAPABILITY
 from baby.core import (
     AgentSpec,
     PermissionCategory,
@@ -11,7 +12,7 @@ from baby.core import (
     ToolSpec,
 )
 from baby.logging import get_logger
-from baby.tools import tool_registry
+from baby.tools import SAFE_CODING_TOOL_NAMES, tool_registry
 
 logger = get_logger(__name__)
 
@@ -48,6 +49,23 @@ class SelectionLogic:
         if not enabled_agents:
             logger.warning("No enabled agents available")
             return None
+
+        if self._is_coding_step(step, task):
+            matching_agents = [
+                agent
+                for agent in enabled_agents
+                if agent.role == "coding"
+                or agent.id == CODING_AGENT_ID
+                or any(cap.name == CODING_CAPABILITY for cap in agent.spec.capabilities)
+            ]
+            if matching_agents:
+                selected = matching_agents[0]
+                logger.info(
+                    "Selected coding agent for step",
+                    agent_id=selected.id,
+                    step_id=step.step_id,
+                )
+                return selected.spec
 
         selected = enabled_agents[0]
         logger.info(
@@ -92,6 +110,12 @@ class SelectionLogic:
         )
 
         return selected.spec
+
+    @staticmethod
+    def _is_coding_step(step: PlanStep, task: Task) -> bool:
+        if step.metadata.get("domain") == "coding" or task.metadata.get("domain") == "coding":
+            return True
+        return step.tool_name in SAFE_CODING_TOOL_NAMES
 
     def get_agents_with_capability(self, capability_name: str) -> List[AgentSpec]:
         """Get all agents with a capability.

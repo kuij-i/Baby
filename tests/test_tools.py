@@ -4,16 +4,21 @@ import asyncio
 
 import pytest
 
+from baby.audit import audit_log
 from baby.core import (
     AgentId,
+    AuditEventType,
     PermissionCategory,
     PermissionLevel,
+    TaskId,
     ToolPermission,
     ToolSpec,
 )
-from baby.errors import PermissionDeniedError, ToolNotFoundError
-from baby.permissions import permission_manager
+from baby.errors import ApprovalRequiredError, PermissionDeniedError, ToolNotFoundError
+from baby.permissions import approval_manager, permission_manager
+from baby.tools import SAFE_CODING_TOOL_NAMES
 from baby.tools.base import Tool, ToolResult
+from baby.tools.coding import build_safe_coding_tools, register_safe_coding_tools
 from baby.tools.executor import tool_executor
 from baby.tools.registry import tool_registry
 
@@ -228,6 +233,8 @@ class TestToolExecutor:
         """Setup test environment."""
         tool_registry.clear()
         permission_manager.clear()
+        approval_manager.clear()
+        audit_log.clear()
 
     @pytest.mark.asyncio
     async def test_execute_with_permission(self) -> None:
@@ -318,3 +325,162 @@ class TestToolExecutor:
 
         assert result.success is False
         assert "timed out" in result.error
+
+    @pytest.mark.asyncio
+    async def test_execute_approval_required_without_explicit_approval(self, tmp_path) -> None:
+        """Test approval-gated tools cannot execute without approval."""
+        register_safe_coding_tools(tmp_path)
+        write_tool = tool_registry.get("repository_write_file")
+        task_id = TaskId()
+        agent_id = AgentId(id="agent-1")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.LOCAL_WRITE,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Write with approval",
+            ),
+        )
+
+        with pytest.raises(ApprovalRequiredError):
+            await tool_executor.execute(
+                tool=write_tool,
+                agent_id=agent_id,
+                task_id=task_id,
+                path="notes.txt",
+                content="pending approval",
+            )
+
+        events = audit_log.get_events(task_id=task_id)
+        event_types = [event.event_type for event in events]
+        assert AuditEventType.PERMISSION_CHECKED in event_types
+        assert AuditEventType.APPROVAL_REQUESTED in event_types
+
+    @pytest.mark.asyncio
+    async def test_execute_approval_granted_allows_write(self, tmp_path) -> None:
+        """Test explicitly approved writes execute normally."""
+        register_safe_coding_tools(tmp_path)
+        write_tool = tool_registry.get("repository_write_file")
+        task_id = TaskId()
+        agent_id = AgentId(id="agent-1")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.LOCAL_WRITE,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Write with approval",
+            ),
+        )
+
+        with pytest.raises(ApprovalRequiredError):
+            await tool_executor.execute(
+                tool=write_tool,
+                agent_id=agent_id,
+                task_id=task_id,
+                path="notes.txt",
+                content="approved content",
+            )
+
+        request = approval_manager.find_request(
+            task_id=task_id,
+            agent_id=agent_id,
+            action_type="tool:repository_write_file:local_write",
+        )
+        assert request is not None
+        approval_manager.decide(request.request_id, approved=True)
+
+        result = await tool_executor.execute(
+            tool=write_tool,
+            agent_id=agent_id,
+            task_id=task_id,
+            path="notes.txt",
+            content="approved content",
+        )
+
+        assert result.success is True
+        assert (tmp_path / "notes.txt").read_text(encoding="utf-8") == "approved content"
+
+    @pytest.mark.asyncio
+    async def test_execute_approval_denied_blocks_write(self, tmp_path) -> None:
+        """Test explicitly denied writes remain blocked."""
+        register_safe_coding_tools(tmp_path)
+        write_tool = tool_registry.get("repository_write_file")
+        task_id = TaskId()
+        agent_id = AgentId(id="agent-1")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.LOCAL_WRITE,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Write with approval",
+            ),
+        )
+
+        with pytest.raises(ApprovalRequiredError):
+            await tool_executor.execute(
+                tool=write_tool,
+                agent_id=agent_id,
+                task_id=task_id,
+                path="notes.txt",
+                content="denied content",
+            )
+
+        request = approval_manager.find_request(
+            task_id=task_id,
+            agent_id=agent_id,
+            action_type="tool:repository_write_file:local_write",
+        )
+        assert request is not None
+        approval_manager.decide(request.request_id, approved=False)
+
+        with pytest.raises(PermissionDeniedError):
+            await tool_executor.execute(
+                tool=write_tool,
+                agent_id=agent_id,
+                task_id=task_id,
+                path="notes.txt",
+                content="denied content",
+            )
+
+
+class TestSafeCodingTools:
+    """Tests for repository-bounded safe coding tools."""
+
+    def setup_method(self) -> None:
+        tool_registry.clear()
+        permission_manager.clear()
+        approval_manager.clear()
+
+    def test_safe_tool_allow_list_has_no_unrestricted_capabilities(self, tmp_path) -> None:
+        """Test safe coding tools expose only repository-bounded read/write operations."""
+        tools = build_safe_coding_tools(tmp_path)
+        assert {tool.name for tool in tools} == SAFE_CODING_TOOL_NAMES
+        for tool in tools:
+            assert all(
+                permission.category in {PermissionCategory.LOCAL_READ, PermissionCategory.LOCAL_WRITE}
+                for permission in tool.permissions_required
+            )
+
+    @pytest.mark.asyncio
+    async def test_read_tool_blocks_paths_outside_repo_root(self, tmp_path) -> None:
+        """Test repository tools reject filesystem traversal outside the repository root."""
+        register_safe_coding_tools(tmp_path)
+        read_tool = tool_registry.get("repository_read_file")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.LOCAL_READ,
+                level=PermissionLevel.ALLOW,
+                description="Read local files",
+            ),
+        )
+
+        result = await tool_executor.execute(
+            tool=read_tool,
+            agent_id=AgentId(id="agent-1"),
+            task_id=TaskId(),
+            path="../outside.txt",
+        )
+
+        assert result.success is False
+        assert "outside the repository root" in (result.error or "")

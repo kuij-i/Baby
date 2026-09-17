@@ -20,6 +20,7 @@ from baby.core.contracts import (
     ToolPermission,
     ToolSpec,
     VerificationResult,
+    utc_now,
 )
 
 __all__ = [
@@ -42,4 +43,5 @@ __all__ = [
     "ToolPermission",
     "ToolSpec",
     "VerificationResult",
+    "utc_now",
 ]

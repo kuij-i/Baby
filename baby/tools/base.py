@@ -4,7 +4,7 @@ Provides tool abstraction, registry, and execution with permission checks.
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from baby.core import ToolSpec
@@ -35,7 +35,7 @@ class ToolResult:
         self.output = output
         self.error = error
         self.execution_time_ms = execution_time_ms
-        self.timestamp = datetime.utcnow()
+        self.timestamp = datetime.now(timezone.utc)
 
     def __repr__(self) -> str:
         return f"ToolResult(success={self.success}, " f"execution_time_ms={self.execution_time_ms})"

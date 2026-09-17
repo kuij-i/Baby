@@ -1,6 +1,6 @@
 """Tests for domain contracts."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -180,6 +180,7 @@ class TestTask:
         assert task.title == "Implement authentication"
         assert isinstance(task.id, TaskId)
         assert isinstance(task.created_at, datetime)
+        assert task.created_at.tzinfo == timezone.utc
 
     def test_task_priority_validation(self) -> None:
         """Test Task priority validation."""
@@ -194,6 +195,11 @@ class TestTask:
         # Invalid: negative
         with pytest.raises(ValueError):
             Task(title="Test", description="Test", priority=-1)
+
+    def test_task_metadata_defaults(self) -> None:
+        """Test Task metadata defaults to an empty dict."""
+        task = Task(title="Test", description="Test")
+        assert task.metadata == {}
 
 
 class TestPlanStep:
@@ -220,6 +226,11 @@ class TestPlanStep:
             dependencies=[1],  # Depends on step 1
         )
         assert step.dependencies == [1]
+
+    def test_plan_step_metadata_defaults(self) -> None:
+        """Test PlanStep metadata defaults to an empty dict."""
+        step = PlanStep(step_id=1, description="Step")
+        assert step.metadata == {}
 
 
 class TestPlan:
@@ -285,6 +296,7 @@ class TestVerificationResult:
         """Test creating a verified VerificationResult."""
         result = VerificationResult(
             agent_result_id=1,
+            agent_id=AgentId(id="agent-1"),
             verified=True,
             verification_method="test-execution",
         )
@@ -295,12 +307,51 @@ class TestVerificationResult:
         """Test VerificationResult with issues."""
         result = VerificationResult(
             agent_result_id=1,
+            agent_id=AgentId(id="agent-1"),
             verified=False,
             verification_method="test-execution",
             issues=["Test 1 failed", "Test 2 failed"],
         )
         assert result.verified is False
         assert len(result.issues) == 2
+
+    def test_verification_result_timestamp_timezone_aware(self) -> None:
+        """Test VerificationResult timestamps are timezone-aware UTC."""
+        result = VerificationResult(
+            agent_result_id=1,
+            agent_id=AgentId(id="agent-1"),
+            verified=True,
+            verification_method="test-execution",
+        )
+        assert result.timestamp.tzinfo == timezone.utc
+
+
+class TestTimezoneAwareTimestamps:
+    """Tests for timezone-aware contract timestamps."""
+
+    def test_memory_record_timestamp_timezone_aware(self) -> None:
+        """Test MemoryRecord timestamps use UTC."""
+        artifact = Artifact(
+            task_id=TaskId(),
+            agent_id=AgentId(id="agent-1"),
+            name="generated.py",
+            artifact_type="source-code",
+            content="pass",
+        )
+        assert artifact.created_at.tzinfo == timezone.utc
+
+    def test_approval_request_timestamp_timezone_aware(self) -> None:
+        """Test approval request timestamps use UTC."""
+        request = ApprovalRequest(
+            task_id=TaskId(),
+            agent_id=AgentId(id="agent-1"),
+            action_type="write",
+            reason="Need to write a file",
+            risk_level="high",
+        )
+        assert request.created_at.tzinfo == timezone.utc
+        request.approval_timestamp = datetime.now(timezone.utc) + timedelta(seconds=1)
+        assert request.approval_timestamp.tzinfo == timezone.utc
 
 
 class TestApprovalRequest:

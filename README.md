@@ -1,154 +1,132 @@
 # Baby
 
-Baby is a personal AI operating system / AI control center designed to coordinate multiple specialist AI agents across different domains (coding, trading, copywriting, testing, cybersecurity) with strong governance, permission controls, and audit logging.
+Baby is a personal AI operating system / AI control center built around explicit control-plane boundaries:
 
-## Architecture
-
-Baby follows a layered orchestration architecture:
-
-```
+```text
 USER TASK
-↓
-BABY ORCHESTRATOR
-↓
-PLANNER
-↓
-ROUTER
-↓
-SPECIALIST AGENT
-↓
-TOOLS
-↓
-VERIFICATION
-↓
-MEMORY
-↓
-AUDIT LOG
-↓
-FINAL RESPONSE
+  → ORCHESTRATOR
+  → PLANNER
+  → ROUTER / SELECTION
+  → SPECIALIST AGENT
+  → SAFE TOOLS
+  → VERIFICATION
+  → MEMORY
+  → AUDIT
+  → RESPONSE
 ```
 
-## Core Principles
+The repository currently implements a narrow, deterministic vertical slice of that architecture, including a secure Coding Agent milestone.
 
-- **Production-quality code** with strong typing
-- **Clear separation of concerns** with modular architecture
-- **Security by default** with permission controls and approval workflows
-- **Auditability** of all meaningful actions
-- **Extensibility** to support new agent types and tools
-- **No unrestricted autonomous execution** - all actions have boundaries
+## Current Implementation Status
 
-## Project Structure
+Implemented in source today:
 
-```
+- Strongly typed core contracts in `baby/core/`
+- Agent base class and registry in `baby/agents/`
+- Task planning and selection in `baby/planning/`
+- Orchestration with dependency checks and `previous_results` propagation in `baby/orchestration/`
+- Permission checks plus explicit approval tracking in `baby/permissions/`
+- Registered tool abstractions, registry, and executor in `baby/tools/`
+- Deterministic verification in `baby/verification/`
+- Minimal replaceable in-memory memory store in `baby/memory/`
+- In-memory audit log in `baby/audit/`
+- Secure Coding Agent plus repository-bounded coding tools
+
+Historical phase summaries are preserved in `PHASE_*.md` and should be treated as historical context rather than the current source of truth.
+
+## Secure Coding Agent Milestone
+
+This milestone adds a production-oriented Coding Agent that stays inside the hardened control plane.
+
+### Implemented behavior
+
+- Coding tasks can be marked with `Task.metadata["domain"] = "coding"`
+- The planner maps supported coding operations to explicit safe tools
+- Selection prefers the registered Coding Agent for coding steps
+- The Coding Agent only executes allow-listed safe tools
+- Repository tools are bounded to a configured repository root
+- Write actions require explicit approval before execution
+- Results are deterministically verified before the orchestrator accepts them
+- Successful verified coding actions store only minimal safe memory summaries
+- Important task, approval, tool, and verification events are auditable
+
+### Supported safe coding tools
+
+- `repository_list_files`
+- `repository_read_file`
+- `repository_write_file`
+
+These tools do **not** expose unrestricted shell access, arbitrary subprocess execution, unrestricted filesystem access, unrestricted network access, or credential handling.
+
+## Repository Structure
+
+```text
 baby/
-  core/                  # Core domain contracts and types
-  orchestrator/          # Main orchestration engine
-  planning/              # Task planning subsystem
-  routing/               # Agent routing logic
-  permissions/           # Permission and authorization system
-  verification/          # Result verification layer
-  memory/                # Memory management
-  audit/                 # Audit logging
-  agents/                # Specialist agent implementations
-    coding/
-    trading/
-    copywriting/
-    testing/
-    cybersecurity/
-  tools/                 # Tool implementations and abstractions
-  configuration.py       # Configuration management
-  logging.py             # Structured logging
-  errors.py              # Exception types
+  agents/          # Agent base class, registry, coding agent
+  audit/           # Audit log
+  core/            # Typed contracts
+  memory/          # Replaceable memory interface + in-memory store
+  orchestration/   # Task execution flow
+  permissions/     # Permission checks + approval tracking
+  planning/        # Planner + selection logic
+  tools/           # Tool abstractions, executor, safe coding tools
+  verification/    # Deterministic verification
+  configuration.py
+  errors.py
+  logging.py
 
-tests/                   # Test suite
-docs/                    # Documentation
-.github/                 # GitHub workflows and instructions
+tests/             # Regression tests
+docs/              # Architecture, security, development docs
 ```
+
+## Security Boundaries
+
+- No unrestricted autonomous execution
+- No unrestricted shell or arbitrary subprocess execution
+- No unrestricted filesystem or network access
+- Explicit registered tools only
+- Explicit permission checks before tool use
+- Approval requests recorded and enforced for high-risk actions
+- Deterministic verification boundary before result acceptance
+- Audit logging for meaningful execution events
+- No secrets in source control
 
 ## Development
 
-### Setup
+Install dependencies:
 
 ```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
-
-# Install dependencies
-pip install -e .[dev]
+python -m pip install -e .[dev]
 ```
 
-### Testing
+Run validation:
 
 ```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=baby tests/
-
-# Run specific test file
-pytest tests/test_contracts.py
-
-# Run unit tests only
-pytest -m unit
+python -m pytest
+python -m ruff check baby tests
+python -m black --check baby tests
+python -m mypy baby
 ```
-
-### Code Quality
-
-```bash
-# Format code
-black baby tests
-
-# Lint code
-ruff check baby tests
-
-# Type checking
-mypy baby
-
-# Sort imports
-isort baby tests
-```
-
-## Implementation Status
-
-- [x] PHASE 0: Repository inspection
-- [x] PHASE 1: Foundation
-  - [x] Project structure
-  - [x] Configuration
-  - [x] Typed contracts
-  - [x] Logging infrastructure
-  - [x] Error handling
-  - [x] Testing foundation
-- [ ] PHASE 2: Agent framework
-- [ ] PHASE 3: Permission system
-- [ ] PHASE 4: Tool framework
-- [ ] PHASE 5: Planner + orchestrator
-- [ ] PHASE 6: Memory system
-- [ ] PHASE 7: Coding agent
-- [ ] PHASE 8: First complete vertical slice
-- [ ] PHASE 9: UI
-- [ ] PHASE 10: Additional specialist teams
-
-## Security
-
-Baby is designed with security as a core principle:
-
-- **Permission-based access control** - agents have explicit, limited permissions
-- **Approval workflows** - high-risk actions require explicit approval
-- **Audit logging** - all meaningful actions are recorded
-- **Secret management** - API keys and credentials are never committed
-- **Least privilege** - agents receive minimal necessary permissions
-
-For detailed security information, see [docs/security.md](docs/security.md).
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) - System design and component overview
-- [Security](docs/security.md) - Security model and best practices
-- [Development](docs/development.md) - Developer guide
-- [Copilot Instructions](.github/copilot-instructions.md) - Repository-level guidance
+- `AGENTS.md` - concise contributor/agent guide
+- `docs/architecture.md` - current architecture and coding-agent slice
+- `docs/security.md` - security and approval boundaries
+- `docs/development.md` - local workflow and validation commands
+- `.github/copilot-instructions.md` - repository-specific coding guidance
 
-## License
+## Current Technical Debt / Next Milestones
 
-MIT
+Not implemented yet:
+
+- LLM-backed planning or code generation
+- Rich approval persistence/backends
+- Durable audit or memory storage
+- Additional specialist agents
+- UI
+- Live trading execution
+- Vector memory / embeddings
+- Unrestricted execution tools
+
+Recommended next milestone: expand the coding workflow with more safe repository operations and richer deterministic verification, while keeping the same permission, approval, memory, and audit boundaries.

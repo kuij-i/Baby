@@ -4,10 +4,10 @@ import asyncio
 from typing import Any, Optional
 
 from baby.audit import audit_log
-from baby.core import AgentId, AuditEventType, TaskId
-from baby.errors import ExecutionError, PermissionDeniedError
+from baby.core import AgentId, AuditEventType, PermissionLevel, TaskId
+from baby.errors import ApprovalRequiredError, ExecutionError, PermissionDeniedError
 from baby.logging import get_logger
-from baby.permissions import permission_manager
+from baby.permissions import approval_manager, permission_manager
 from baby.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
@@ -62,6 +62,49 @@ class ToolExecutor:
                         permission=required_perm.category.value,
                         level=level.value,
                     )
+                    audit_log.record(
+                        AuditEventType.PERMISSION_CHECKED,
+                        task_id=task_id,
+                        agent_id=agent_id,
+                        user_id=user_id,
+                        details={
+                            "tool": tool.name,
+                            "permission": required_perm.category.value,
+                            "result": level.value,
+                        },
+                    )
+                    if level == PermissionLevel.APPROVAL_REQUIRED:
+                        if task_id is None:
+                            raise ApprovalRequiredError(
+                                "Tool "
+                                f"{tool.name} requires approval for {required_perm.category.value} "
+                                "but no task was provided"
+                            )
+                        action_type = f"tool:{tool.name}:{required_perm.category.value}"
+                        approval = approval_manager.find_request(
+                            task_id=task_id,
+                            agent_id=agent_id,
+                            action_type=action_type,
+                        )
+                        if approval is None:
+                            approval = approval_manager.request_approval(
+                                task_id=task_id,
+                                agent_id=agent_id,
+                                action_type=action_type,
+                                reason=f"Execute {tool.name} with {required_perm.category.value}",
+                                risk_level="high",
+                                user_id=user_id,
+                            )
+                        if approval.approved is True:
+                            continue
+                        if approval.approved is False:
+                            raise PermissionDeniedError(
+                                f"Approval denied for {tool.name} using {required_perm.category.value}"
+                            )
+                        raise ApprovalRequiredError(
+                            "Approval required for "
+                            f"{tool.name} using {required_perm.category.value}: {approval.request_id}"
+                        )
                 except PermissionDeniedError as e:
                     logger.warning(
                         "Permission denied",
@@ -80,6 +123,14 @@ class ToolExecutor:
                             "result": "denied",
                             "reason": str(e),
                         },
+                    )
+                    raise
+                except ApprovalRequiredError as e:
+                    logger.info(
+                        "Approval required",
+                        tool=tool.name,
+                        agent_id=agent_id_str,
+                        error=str(e),
                     )
                     raise
 
@@ -138,7 +189,7 @@ class ToolExecutor:
 
             return result
 
-        except PermissionDeniedError:
+        except (PermissionDeniedError, ApprovalRequiredError):
             raise
         except Exception as e:
             logger.error(
