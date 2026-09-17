@@ -1,8 +1,9 @@
-"""Orchestration for BABY.
+"""Planning and orchestration modules for BABY.
 
-Core execution engine coordinating tasks, agents, and tools.
+This package contains the planning and execution coordination components of the
+BABY operating system.
 """
 
-from baby.orchestration.orchestrator import orchestrator, Orchestrator
+from baby.orchestration.orchestrator import Orchestrator, orchestrator
 
-__all__ = ["orchestrator", "Orchestrator"]
+__all__ = ["Orchestrator", "orchestrator"]

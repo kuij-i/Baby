@@ -1,17 +1,18 @@
-"""Planning and orchestration for BABY.
+"""Planning and orchestration modules for BABY.
 
-Provides task planning, agent/tool selection, and execution coordination.
+This package contains the planning and execution coordination components of the
+BABY operating system.
 """
 
-from baby.planning.planner import task_planner, TaskPlanner
-from baby.planning.selection import selection_logic, SelectionLogic
-from baby.orchestration.orchestrator import orchestrator, Orchestrator
+from baby.planning.planner import TaskPlanner, task_planner
+from baby.planning.selection import SelectionLogic, selection_logic
+from baby.orchestration.orchestrator import Orchestrator, orchestrator
 
 __all__ = [
-    "task_planner",
     "TaskPlanner",
-    "selection_logic",
+    "task_planner",
     "SelectionLogic",
-    "orchestrator",
+    "selection_logic",
     "Orchestrator",
+    "orchestrator",
 ]
