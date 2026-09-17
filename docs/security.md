@@ -18,14 +18,12 @@ Security is a core principle of BABY, not an afterthought. The system is designe
 
 **Example:**
 ```python
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
     openai_api_key: str  # Read from OPENAI_API_KEY env var
     github_token: str    # Read from GITHUB_TOKEN env var
-
-    class Config:
-        env_file = ".env"
 ```
 
 ### 2. Permission-Based Access Control
@@ -54,27 +52,18 @@ class PermissionCategory(str, Enum):
 - `DENY` - Rejected immediately
 - `APPROVAL_REQUIRED` - User must approve
 
-**Authorization Flow:**
+**Current authorization flow:**
 ```python
-def can_execute_tool(agent: AgentSpec, tool: ToolSpec) -> AuthorizationResult:
-    # 1. Check if agent has required permissions
-    agent_permissions = get_agent_permissions(agent.id)
-    
-    # 2. Check tool requirements
-    tool_permissions = tool.permissions_required
-    
-    # 3. For each required permission:
-    for perm in tool_permissions:
-        decision = check_permission(agent, perm)
-        if decision == DENY:
+async def execute_tool(tool: Tool, agent_id: AgentId, **kwargs) -> ToolResult:
+    for perm in tool.permissions_required:
+        decision = permission_manager.check_permission(str(agent_id), perm)
+        if decision == PermissionLevel.DENY:
             raise PermissionDeniedError()
-        elif decision == APPROVAL_REQUIRED:
-            request_user_approval(agent, tool, perm)
-            wait_for_approval()  # Blocks until approved or denied
-    
-    # 4. All permissions granted
-    record_audit_event("PERMISSION_CHECKED", granted=True)
-    return AuthorizationResult(authorized=True)
+        if decision == PermissionLevel.APPROVAL_REQUIRED:
+            request = approval_manager.request_approval(...)
+            raise ApprovalRequiredError(f"request_id={request.request_id}")
+
+    return await tool.execute_with_retry(**kwargs)
 ```
 
 ### 3. No Unrestricted Shell Execution
@@ -106,6 +95,12 @@ class GitTool(Tool):
 ### 4. High-Risk Actions Require Approval
 
 **Rule:** Dangerous operations cannot execute silently.
+
+**Current implementation details:**
+- `ToolExecutor` never auto-approves `APPROVAL_REQUIRED`
+- `ApprovalManager` stores explicit grant/deny decisions in memory
+- `APPROVAL_REQUESTED`, `APPROVAL_GRANTED`, and `APPROVAL_DENIED` are audited
+- High-risk trading and cybersecurity actions remain approval-gated
 
 **High-Risk Actions:**
 - Destructive operations (delete, drop)
@@ -261,16 +256,13 @@ ALPHAVANTAGE_API_KEY=...
 ### Configuration
 
 ```python
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
     openai_api_key: str
     anthropic_api_key: Optional[str] = None
     github_token: str
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
 ```
 
 ### Usage

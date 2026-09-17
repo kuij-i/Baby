@@ -36,5 +36,6 @@ class Settings(BaseSettings):
     # Security
     enable_approval_workflow: bool = True
 
+
 # Global settings instance
 settings = Settings()

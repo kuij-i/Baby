@@ -2,6 +2,7 @@
 
 Provides authorization checks and permission enforcement.
 """
+
 from baby.permissions.approval import ApprovalManager, approval_manager
 from baby.permissions.manager import PermissionManager, permission_manager
 

@@ -91,20 +91,17 @@ pytest -vv
 ### 5. Check Code Quality
 
 ```bash
-# Format code with black
-black baby tests docs
+# Validate formatting
+black --check baby tests
 
-# Lint with ruff
+# Lint
 ruff check baby tests
 
-# Type checking with mypy
+# Type checking
 mypy baby
 
-# Sort imports with isort
-isort baby tests
-
-# All at once
-black baby tests && ruff check baby tests && mypy baby && isort baby tests
+# All foundation checks
+black --check baby tests && ruff check baby tests && mypy baby && pytest
 ```
 
 ### 6. Commit and Push
@@ -132,35 +129,34 @@ baby/
 ├── core/
 │   ├── __init__.py
 │   └── contracts.py          # Core domain contracts
-├── orchestrator/             # Orchestration engine (Phase 5)
-├── planning/                 # Task planning (Phase 5)
-├── routing/                  # Agent routing (Phase 5)
-├── agents/                   # Specialist agents (Phase 7+)
+├── orchestration/            # Orchestration engine
+├── planning/                 # Task planning
+├── agents/                   # Agent base class and registry
 │   ├── __init__.py
 │   └── base.py               # Agent base class
-├── tools/                    # Tool abstractions (Phase 4)
+├── tools/                    # Tool abstractions, registry, executor
 │   ├── __init__.py
 │   └── base.py               # Tool base class
-├── permissions/              # Permission system (Phase 3)
+├── permissions/              # Permission and approval management
 │   ├── __init__.py
 │   └── manager.py            # Permission manager
-├── verification/             # Verification layer (Phase 5)
-├── memory/                   # Memory system (Phase 6)
-├── audit/                    # Audit logging (Phase 1)
+├── verification/             # Verification boundary
+├── memory/                   # Replaceable in-memory memory store
+├── audit/                    # Audit logging
 │   ├── __init__.py
-│   └── log.py                # Audit log implementation
+├── configuration.py          # Configuration management
 ├── logging.py                # Structured logging
 ├── errors.py                 # Exception types
-└── configuration.py          # Configuration management (Phase 1)
 
 tests/
 ├── __init__.py
 ├── test_contracts.py         # Contract tests
-├── test_permissions.py       # Permission tests (Phase 3)
-├── test_agents.py            # Agent tests (Phase 2+)
-├── test_tools.py             # Tool tests (Phase 4)
-├── test_orchestrator.py      # Orchestrator tests (Phase 5)
-└── fixtures/                 # Test fixtures
+├── test_permissions.py       # Permission tests
+├── test_agents.py            # Agent tests
+├── test_tools.py             # Tool and approval tests
+├── test_orchestration.py     # Orchestration and verification tests
+├── test_memory.py            # Memory store tests
+└── test_audit.py             # Audit tests
 
 docs/
 ├── architecture.md           # Architecture overview
@@ -382,6 +378,13 @@ logger.error("Something failed", exc=exception)
 ```bash
 pytest -vv -s tests/test_contracts.py::TestTaskId::test_task_id_creation
 ```
+
+## Current milestone
+
+The repository currently has a hardened foundation: contracts, agent registry,
+permission checks, approval storage, tool executor, planner/orchestrator,
+verification boundary, and a simple in-memory memory store. Do not implement the
+Coding Agent milestone until this foundation remains stable under tests.
 
 ## CI/CD
 

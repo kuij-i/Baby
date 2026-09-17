@@ -13,6 +13,12 @@ Baby is a personal AI operating system designed to coordinate multiple specialis
 
 ## Core Architecture
 
+### Current implementation status
+
+- Implemented today: contracts, audit log, agent registry, permission manager, approval request storage, tool executor, planner, orchestrator, verifier, and replaceable in-memory memory store
+- Current milestone: harden the existing foundation before any Coding Agent implementation
+- Not implemented yet: Coding Agent, UI, durable memory/audit backends, or broader autonomous multi-agent flows
+
 ### Layered Orchestration
 
 ```
@@ -45,20 +51,20 @@ The heart of BABY. Responsibilities:
 - Receive and validate tasks
 - Invoke the planner
 - Coordinate agent execution
-- Check permissions before execution
-- Handle approvals
+- Enforce plan dependencies and pass dependency results into execution context
+- Check permissions before tool execution through the tool executor
+- Respect explicit approval decisions for approval-gated tool actions
 - Manage execution context
-- Coordinate verification
+- Run the verification boundary for each agent result
 - Record audit events
 - Return results to user
 
 #### 2. Planner
 
 Decomposes tasks into executable steps.
-- Analyze task requirements
-- Determine step sequence
+- Determine a bounded step sequence
 - Identify dependencies
-- Flag approval-required steps
+- Flag approval-required steps for future orchestration policy decisions
 - Produce structured Plan
 
 #### 3. Router
@@ -78,6 +84,9 @@ Domain-specific AI agents:
 - **Copywriting Agent** - Content creation and editing
 - **Testing Agent** - QA and test automation
 - **Cybersecurity Agent** - Security assessment and remediation
+
+These domain specialists are roadmap items. The current repository only implements
+the shared `Agent` base class plus agent registration and selection primitives.
 
 Each agent:
 - Has explicit capabilities
@@ -131,11 +140,11 @@ Granular access control.
 ```
 Agent wants to use Tool
         ↓
-Orchestrator checks: Does agent have permission?
+ToolExecutor checks: Does agent have permission?
         ↓
 Permission level: ALLOW? → Execute
                  DENY? → Reject
-                 APPROVAL_REQUIRED? → Send to user for approval
+                 APPROVAL_REQUIRED? → Create approval request and wait for explicit decision
 ```
 
 #### 7. Verification Layer
@@ -143,12 +152,8 @@ Permission level: ALLOW? → Execute
 Validates agent output before accepting results.
 
 **Verification Strategies:**
-- Schema validation
-- Test execution (for code)
-- Expected output validation
-- Range/constraint checking
-- Integration tests
-- Security checks
+- Current implementation: deterministic validation of `AgentResult.success` / `error`
+- Future extensions: schema validation, test execution, constraint checks, and domain-specific security verification
 
 #### 8. Memory System
 
@@ -165,8 +170,9 @@ Central knowledge storage.
 - **Execution History** - Tool execution results
 
 **Storage:**
-- Initially SQLite
+- Currently in-memory and process-local
 - Interface-based for later backend replacement
+- Not automatically written by orchestration yet; integration should remain selective and auditable
 
 #### 9. Audit System
 
@@ -389,7 +395,7 @@ Strong validation, serialization, type hints, and ecosystem integration. Helps c
 
 ### Why SQLite Initially?
 
-Simple, file-based, no infrastructure, sufficient for MVP. Can migrate to PostgreSQL when needed without changing application layer (interface-based).
+Deferred. The current implementation deliberately keeps memory and audit storage in memory until a concrete persistence requirement exists.
 
 ### Why Structured Logging?
 
@@ -399,7 +405,7 @@ Machine-readable logs, better for parsing and analysis, easier to ship to log ag
 
 - Multi-user support and authentication
 - Web/desktop UI
-- Advanced memory (embeddings, vector DB)
+- More advanced memory only after a concrete retrieval/use case exists
 - More specialist teams
 - External model providers
 - Distributed execution

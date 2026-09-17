@@ -17,17 +17,16 @@ USER TASK → ORCHESTRATOR → PLANNER → ROUTER → SPECIALIST AGENT → TOOLS
 ```
 baby/
   core/                    # Core domain contracts (Phase 1) ✓
-  orchestrator/            # Orchestration engine (Phase 5)
+  orchestration/           # Orchestration engine
   planning/                # Task planning (Phase 5)
-  routing/                 # Agent routing (Phase 5)
-  permissions/             # Permission system (Phase 3)
-  agents/                  # Specialist agents (Phase 7+)
-  tools/                   # Tool abstractions (Phase 4)
-  verification/            # Verification layer (Phase 5)
-  memory/                  # Memory system (Phase 6)
-  audit/                   # Audit logging (Phase 1) ✓
-  logging.py               # Structured logging (Phase 1) ✓
-  errors.py                # Exceptions (Phase 1) ✓
+  permissions/             # Permission system and approval storage
+  agents/                  # Agent base classes and registry
+  tools/                   # Tool abstractions, registry, and executor
+  verification/            # Verification boundary for agent results
+  memory/                  # Replaceable in-memory memory store
+  audit/                   # In-memory audit logging
+  logging.py               # Structured logging
+  errors.py                # Exceptions
 
 tests/                     # Test suite
 docs/                      # Documentation
@@ -35,19 +34,22 @@ docs/                      # Documentation
 
 ## Implementation Phase
 
-**Current:** PHASE 1 (Foundation) - COMPLETE
-- [x] Project structure
-- [x] Configuration
-- [x] Typed contracts
-- [x] Logging
-- [x] Error handling
-- [x] Testing foundation
+**Completed foundation work**
+- [x] Foundation contracts, configuration, logging, errors, and audit log
+- [x] Agent base class and registry
+- [x] Permission checks, approval request storage, tool registry, and tool executor
+- [x] Planner and orchestrator skeleton
+- [x] Replaceable in-memory memory store
+- [x] Explicit verification boundary for agent results
 
-**Next:** PHASE 2 (Agent Framework)
-- Agent registry
-- Base agent class
-- Capability system
-- Execution interface
+**Current milestone**
+- Harden the existing foundation before any Coding Agent implementation
+
+**Not implemented yet**
+- Coding Agent
+- UI
+- Durable memory/audit storage
+- Unrestricted shell, filesystem, or network access
 
 ## Core Contracts
 
@@ -94,13 +96,11 @@ black baby tests && ruff check baby tests && mypy baby && pytest
 **Pattern:**
 ```python
 # Use environment variables and pydantic-settings
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
     openai_api_key: str  # Read from OPENAI_API_KEY env var
-    
-    class Config:
-        env_file = ".env"  # .env is in .gitignore
 ```
 
 ### Permission Model
@@ -230,7 +230,7 @@ git checkout -b feature/description
 # Make changes, add tests
 
 # Verify quality
-black baby tests && ruff check baby tests && mypy baby && pytest
+black --check baby tests && ruff check baby tests && mypy baby && pytest
 
 # Commit
 git add .
@@ -243,26 +243,23 @@ git push origin feature/description
 ## Next Steps After Phase 1
 
 1. **Phase 2:** Build agent framework
-   - Agent registry
-   - Base agent class
-   - Capability system
+   - Extend beyond the current base class and registry
+   - Add concrete specialist agents when the foundation is stable
 
-2. **Phase 3:** Build permission system
-   - Permission manager
-   - Authorization checks
-   - Approval workflow
+2. **Phase 3+:** Deepen policy enforcement
+   - Domain-specific approval flows
+   - Narrower tool constraints
+   - Durable audit persistence
 
-3. **Phase 4:** Build tool framework
-   - Tool registry
-   - Tool abstractions
-   - Execution interface
+3. **Phase 4+:** Improve orchestration
+   - Richer planning and routing
+   - Selective memory integration
+   - Stronger verification strategies
 
-4. **Phase 5:** Build orchestrator
-   - Task intake
-   - Planning
-   - Routing
-   - Execution
-   - Verification
+4. **Later milestones**
+   - Coding Agent
+   - UI
+   - Additional specialist teams
 
 ## Questions?
 

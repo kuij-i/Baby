@@ -42,20 +42,14 @@ FINAL RESPONSE
 ```
 baby/
   core/                  # Core domain contracts and types
-  orchestrator/          # Main orchestration engine
+  orchestration/         # Main orchestration engine
   planning/              # Task planning subsystem
-  routing/               # Agent routing logic
   permissions/           # Permission and authorization system
   verification/          # Result verification layer
   memory/                # Memory management
   audit/                 # Audit logging
-  agents/                # Specialist agent implementations
-    coding/
-    trading/
-    copywriting/
-    testing/
-    cybersecurity/
-  tools/                 # Tool implementations and abstractions
+  agents/                # Agent base classes and registry
+  tools/                 # Tool abstractions, registry, and executor
   configuration.py       # Configuration management
   logging.py             # Structured logging
   errors.py              # Exception types
@@ -97,38 +91,44 @@ pytest -m unit
 ### Code Quality
 
 ```bash
-# Format code
-black baby tests
-
-# Lint code
+# Validate formatting, linting, typing, and tests
+black --check baby tests
 ruff check baby tests
-
-# Type checking
 mypy baby
-
-# Sort imports
-isort baby tests
+pytest
 ```
 
 ## Implementation Status
 
-- [x] PHASE 0: Repository inspection
-- [x] PHASE 1: Foundation
-  - [x] Project structure
-  - [x] Configuration
-  - [x] Typed contracts
-  - [x] Logging infrastructure
-  - [x] Error handling
-  - [x] Testing foundation
-- [ ] PHASE 2: Agent framework
-- [ ] PHASE 3: Permission system
-- [ ] PHASE 4: Tool framework
-- [ ] PHASE 5: Planner + orchestrator
-- [ ] PHASE 6: Memory system
-- [ ] PHASE 7: Coding agent
-- [ ] PHASE 8: First complete vertical slice
-- [ ] PHASE 9: UI
-- [ ] PHASE 10: Additional specialist teams
+### Completed foundation slices
+
+- [x] Phase 1 foundation contracts, configuration, logging, errors, and audit log
+- [x] Phase 2 agent base classes and registry
+- [x] Phase 3 permission manager, approval workflow storage, tool registry, and safe tool executor
+- [x] Phase 4 planning and orchestration skeleton with dependency enforcement
+- [x] Phase 5 replaceable in-memory memory store
+- [x] Verification boundary for agent results
+
+### Current milestone
+
+- Harden the existing foundation before any Coding Agent implementation
+- Keep approvals explicit and auditable
+- Keep orchestration bounded and deterministic
+- Keep memory simple and replaceable
+
+### Remaining work
+
+- [ ] Implement the Coding Agent milestone
+- [ ] Add richer planner/router behavior beyond the current deterministic skeleton
+- [ ] Decide how and when orchestrator should persist selective memory records
+- [ ] Introduce durable audit/memory storage when a concrete need exists
+- [ ] Build UI and additional specialist agents after the foundation proves stable
+
+### Technical debt / deliberate limitations
+
+- The verifier currently performs deterministic result-status checks rather than domain-specific validation
+- Planner decomposition remains intentionally simple and does not build a general DAG engine
+- Memory is intentionally process-local and opt-in; there is no automatic long-term storage
 
 ## Security
 
@@ -139,6 +139,7 @@ Baby is designed with security as a core principle:
 - **Audit logging** - all meaningful actions are recorded
 - **Secret management** - API keys and credentials are never committed
 - **Least privilege** - agents receive minimal necessary permissions
+- **No auto-approval** - approval-required tool actions stop until an explicit decision is recorded
 
 For detailed security information, see [docs/security.md](docs/security.md).
 

@@ -238,8 +238,12 @@ class TestOrchestrator:
     @pytest.mark.asyncio
     async def test_execute_task_enforces_dependencies_and_previous_results(self, monkeypatch) -> None:
         task = Task(title="Test Task", description="Test execution")
-        first_agent = TrackingAgent(AgentSpec(id=AgentId(id="agent-1"), name="Agent 1", description="Test", role="tester"))
-        second_agent = TrackingAgent(AgentSpec(id=AgentId(id="agent-2"), name="Agent 2", description="Test", role="tester"))
+        first_agent = TrackingAgent(
+            AgentSpec(id=AgentId(id="agent-1"), name="Agent 1", description="Test", role="tester")
+        )
+        second_agent = TrackingAgent(
+            AgentSpec(id=AgentId(id="agent-2"), name="Agent 2", description="Test", role="tester")
+        )
         agent_registry.register(first_agent)
         agent_registry.register(second_agent)
 
@@ -270,7 +274,9 @@ class TestOrchestrator:
             AgentSpec(id=AgentId(id="agent-1"), name="Agent 1", description="Test", role="tester"),
             succeed=False,
         )
-        blocked_agent = TrackingAgent(AgentSpec(id=AgentId(id="agent-2"), name="Agent 2", description="Test", role="tester"))
+        blocked_agent = TrackingAgent(
+            AgentSpec(id=AgentId(id="agent-2"), name="Agent 2", description="Test", role="tester")
+        )
         agent_registry.register(failing_agent)
         agent_registry.register(blocked_agent)
 
@@ -317,7 +323,9 @@ class TestOrchestrator:
         first_agent = AgentId(id="agent-1")
         second_agent = AgentId(id="agent-2")
         agent_registry.register(MockAgent(AgentSpec(id=first_agent, name="Agent 1", description="Test", role="tester")))
-        agent_registry.register(MockAgent(AgentSpec(id=second_agent, name="Agent 2", description="Test", role="tester")))
+        agent_registry.register(
+            MockAgent(AgentSpec(id=second_agent, name="Agent 2", description="Test", role="tester"))
+        )
 
         async def planned_task(_: Task) -> Plan:
             return Plan(

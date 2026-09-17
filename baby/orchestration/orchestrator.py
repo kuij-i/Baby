@@ -63,7 +63,8 @@ class Orchestrator:
                 ready_steps = [
                     step
                     for step in plan.steps
-                    if step.step_id in pending_steps and all(dependency in completed_results for dependency in step.dependencies)
+                    if step.step_id in pending_steps
+                    and all(dependency in completed_results for dependency in step.dependencies)
                 ]
                 if not ready_steps:
                     raise ValueError("Circular dependency detected in plan execution")
@@ -71,7 +72,9 @@ class Orchestrator:
                 step = ready_steps[0]
                 dependency_results = {dependency: completed_results[dependency] for dependency in step.dependencies}
                 failed_dependencies = [
-                    dependency for dependency, dependency_result in dependency_results.items() if not dependency_result.success
+                    dependency
+                    for dependency, dependency_result in dependency_results.items()
+                    if not dependency_result.success
                 ]
                 if failed_dependencies:
                     result = AgentResult(
