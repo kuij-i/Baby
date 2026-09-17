@@ -107,6 +107,8 @@ class ToolExecutor:
                     raise
 
             if approval_required_permissions:
+                if task_id is None:
+                    raise ApprovalRequiredError(f"Approval-gated tool {tool.name} requires a task_id")
                 if approval_request_id is None:
                     request = approval_manager.request_approval(
                         task_id=task_id,

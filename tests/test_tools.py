@@ -347,6 +347,33 @@ class TestToolExecutor:
         assert tool.calls == 0
 
     @pytest.mark.asyncio
+    async def test_execute_with_approval_required_needs_task_id(self) -> None:
+        """Test approval-gated tools require a concrete task ID."""
+        permission = ToolPermission(
+            category=PermissionCategory.FINANCIAL_ACTION,
+            level=PermissionLevel.ALLOW,
+            description="Trading action",
+        )
+        tool = self.create_tool(permission, name="trade-tool")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.FINANCIAL_ACTION,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Trading requires approval",
+            ),
+        )
+
+        with pytest.raises(ApprovalRequiredError, match="requires a task_id"):
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                user_id="user-1",
+            )
+
+        assert tool.calls == 0
+
+    @pytest.mark.asyncio
     async def test_execute_with_approved_request_succeeds(self) -> None:
         """Test explicit approval allows tool execution."""
         permission = ToolPermission(

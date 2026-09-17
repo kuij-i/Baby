@@ -77,9 +77,14 @@ class Orchestrator:
                     if not dependency_result.success
                 ]
                 if failed_dependencies:
+                    assigned_agent = await selection_logic.select_agent(step, task)
                     result = AgentResult(
                         step_id=step.step_id,
-                        agent_id=AgentId(id="dependency-blocked"),
+                        agent_id=(
+                            assigned_agent.id
+                            if assigned_agent is not None
+                            else step.agent_id or AgentId(id="unassigned")
+                        ),
                         success=False,
                         error=f"Blocked by failed dependencies: {failed_dependencies}",
                     )
