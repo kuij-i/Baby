@@ -1,6 +1,6 @@
 """Tests for the memory subsystem."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -53,12 +53,22 @@ class TestInMemoryStore:
         record = MemoryRecord(
             record_type="temporary",
             content={"value": "expired"},
-            expires_at=datetime.utcnow() - timedelta(seconds=1),
+            expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
         )
         self.store.save(record)
 
         assert self.store.get(str(record.id)) is None
         assert self.store.search() == []
+
+    def test_expired_records_with_naive_timestamp_are_handled(self) -> None:
+        record = MemoryRecord(
+            record_type="temporary",
+            content={"value": "expired"},
+            expires_at=datetime.now() - timedelta(seconds=1),
+        )
+        self.store.save(record)
+
+        assert self.store.get(str(record.id)) is None
 
     def test_delete_reports_presence(self) -> None:
         record = self.store.save(MemoryRecord(record_type="fact", content={"value": 1}))

@@ -4,12 +4,17 @@ These contracts define the core types and interfaces that form the foundation
 of the BABY system. All major components communicate using these types.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+def utc_now() -> datetime:
+    """Return the current UTC timestamp as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 
 
 class TaskId(BaseModel):
@@ -112,7 +117,7 @@ class Task(BaseModel):
     id: TaskId = Field(default_factory=TaskId)
     title: str = Field(..., min_length=1)
     description: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
     user_id: Optional[str] = None
     priority: int = Field(default=0, ge=0, le=10)
 
@@ -133,7 +138,7 @@ class Plan(BaseModel):
 
     task_id: TaskId
     steps: List[PlanStep] = Field(min_length=1)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
     reasoning: str = Field(..., min_length=1)
 
 
@@ -157,7 +162,7 @@ class AgentResult(BaseModel):
     error: Optional[str] = None
     execution_time_ms: int = Field(default=0, ge=0)
     tokens_used: Optional[int] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now)
 
 
 class VerificationResult(BaseModel):
@@ -167,7 +172,7 @@ class VerificationResult(BaseModel):
     verified: bool
     verification_method: str
     issues: List[str] = Field(default_factory=list)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now)
 
 
 class ApprovalRequest(BaseModel):
@@ -179,7 +184,7 @@ class ApprovalRequest(BaseModel):
     action_type: str = Field(..., min_length=1)
     reason: str = Field(..., min_length=1)
     risk_level: str = Field(...)  # low, medium, high, critical
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
     requires_approval: bool = True
     approved: Optional[bool] = None
     approval_timestamp: Optional[datetime] = None
@@ -194,7 +199,7 @@ class Artifact(BaseModel):
     name: str = Field(..., min_length=1)
     artifact_type: str = Field(..., min_length=1)
     content: Any
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
     verified: bool = False
 
 
@@ -206,7 +211,7 @@ class MemoryRecord(BaseModel):
     agent_id: Optional[AgentId] = None
     record_type: str = Field(..., min_length=1)  # preference, decision, fact, history
     content: Dict[str, Any]
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
     expires_at: Optional[datetime] = None
 
 
@@ -236,9 +241,8 @@ class AuditEvent(BaseModel):
     event_type: AuditEventType
     task_id: Optional[TaskId] = None
     agent_id: Optional[AgentId] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now)
     details: Dict[str, Any] = Field(default_factory=dict)
     user_id: Optional[str] = None
 
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
