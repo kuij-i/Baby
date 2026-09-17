@@ -74,9 +74,7 @@ class TestSelectionLogic:
     @pytest.mark.asyncio
     async def test_select_specified_agent(self) -> None:
         agent_id = AgentId(id="test-agent")
-        agent_registry.register(
-            MockAgent(AgentSpec(id=agent_id, name="Test Agent", description="Test", role="tester"))
-        )
+        agent_registry.register(MockAgent(AgentSpec(id=agent_id, name="Test Agent", description="Test", role="tester")))
         selected = await selection_logic.select_agent(
             PlanStep(step_id=1, description="Test step", agent_id=agent_id),
             Task(title="Test", description="Test"),
@@ -87,9 +85,7 @@ class TestSelectionLogic:
     @pytest.mark.asyncio
     async def test_select_any_agent(self) -> None:
         agent_id = AgentId(id="test-agent")
-        agent_registry.register(
-            MockAgent(AgentSpec(id=agent_id, name="Test Agent", description="Test", role="tester"))
-        )
+        agent_registry.register(MockAgent(AgentSpec(id=agent_id, name="Test Agent", description="Test", role="tester")))
         selected = await selection_logic.select_agent(
             PlanStep(step_id=1, description="Test step"), Task(title="Test", description="Test")
         )
@@ -192,9 +188,7 @@ class TestOrchestrator:
     @pytest.mark.asyncio
     async def test_execute_simple_task(self) -> None:
         agent_id = AgentId(id="test-agent")
-        agent_registry.register(
-            MockAgent(AgentSpec(id=agent_id, name="Test Agent", description="Test", role="tester"))
-        )
+        agent_registry.register(MockAgent(AgentSpec(id=agent_id, name="Test Agent", description="Test", role="tester")))
         result = await orchestrator.execute_task(Task(title="Test Task", description="Test execution"))
         assert result is not None
         assert result.success is True
@@ -210,9 +204,7 @@ class TestOrchestrator:
     async def test_execute_task_records_audit(self) -> None:
         task = Task(title="Test Task", description="Test execution")
         agent_id = AgentId(id="test-agent")
-        agent_registry.register(
-            MockAgent(AgentSpec(id=agent_id, name="Test Agent", description="Test", role="tester"))
-        )
+        agent_registry.register(MockAgent(AgentSpec(id=agent_id, name="Test Agent", description="Test", role="tester")))
         result = await orchestrator.execute_task(task, user_id="test-user")
         assert result is not None
         events = audit_log.get_events_by_task(task.id)

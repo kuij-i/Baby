@@ -1,8 +1,9 @@
 """Tests for domain contracts."""
 
-import pytest
 from datetime import datetime
 from uuid import UUID
+
+import pytest
 
 from baby.core import (
     AgentCapability,

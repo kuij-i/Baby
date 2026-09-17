@@ -3,7 +3,6 @@
 from copy import deepcopy
 from datetime import datetime
 from typing import Optional, Sequence
-from uuid import UUID
 
 from baby.core import AgentId, MemoryRecord, TaskId
 from baby.memory.base import MemoryStore

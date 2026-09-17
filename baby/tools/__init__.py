@@ -4,8 +4,8 @@ Provides tool abstraction, registry, and execution with permission checks.
 """
 
 from baby.tools.base import Tool, ToolResult
-from baby.tools.registry import tool_registry, ToolRegistry
-from baby.tools.executor import tool_executor, ToolExecutor
+from baby.tools.executor import ToolExecutor, tool_executor
+from baby.tools.registry import ToolRegistry, tool_registry
 
 __all__ = [
     "Tool",

@@ -3,11 +3,11 @@
 Provides tool abstraction, registry, and execution with permission checks.
 """
 
-from typing import Any, Dict, Optional
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any, Optional
 
-from baby.core import ToolSpec, AgentId, TaskId
+from baby.core import ToolSpec
 from baby.logging import get_logger
 
 logger = get_logger(__name__)
@@ -24,7 +24,7 @@ class ToolResult:
         execution_time_ms: int = 0,
     ) -> None:
         """Initialize tool result.
-        
+
         Args:
             success: Whether execution succeeded
             output: Tool output
@@ -38,21 +38,18 @@ class ToolResult:
         self.timestamp = datetime.utcnow()
 
     def __repr__(self) -> str:
-        return (
-            f"ToolResult(success={self.success}, "
-            f"execution_time_ms={self.execution_time_ms})"
-        )
+        return f"ToolResult(success={self.success}, " f"execution_time_ms={self.execution_time_ms})"
 
 
 class Tool(ABC):
     """Base class for all tools in BABY.
-    
+
     Tools provide abstracted access to system capabilities with permission checks.
     """
 
     def __init__(self, spec: ToolSpec) -> None:
         """Initialize tool with specification.
-        
+
         Args:
             spec: Tool specification with name, permissions, schema
         """
@@ -72,10 +69,10 @@ class Tool(ABC):
     @abstractmethod
     async def execute(self, **kwargs: Any) -> ToolResult:
         """Execute the tool.
-        
+
         Args:
             **kwargs: Tool-specific arguments
-            
+
         Returns:
             ToolResult with success status and output
         """
@@ -83,10 +80,10 @@ class Tool(ABC):
 
     async def execute_with_retry(self, **kwargs: Any) -> ToolResult:
         """Execute tool with retry on failure.
-        
+
         Args:
             **kwargs: Tool-specific arguments
-            
+
         Returns:
             ToolResult after retries
         """
@@ -111,10 +108,10 @@ class Tool(ABC):
 
     def validate_input(self, **kwargs: Any) -> None:
         """Validate input against tool schema.
-        
+
         Args:
             **kwargs: Tool input
-            
+
         Raises:
             ValueError: If input doesn't match schema
         """
