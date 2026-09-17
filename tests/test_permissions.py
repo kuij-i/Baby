@@ -85,6 +85,27 @@ class TestPermissionManager:
                 ),
             )
 
+    def test_check_permission_explicit_deny(self) -> None:
+        """Test explicitly denied permissions stay denied."""
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.DESTRUCTIVE_ACTION,
+                level=PermissionLevel.DENY,
+                description="Denied destructive action",
+            ),
+        )
+
+        with pytest.raises(PermissionDeniedError):
+            permission_manager.check_permission(
+                "agent-1",
+                ToolPermission(
+                    category=PermissionCategory.DESTRUCTIVE_ACTION,
+                    level=PermissionLevel.ALLOW,
+                    description="Destructive action",
+                ),
+            )
+
     def test_check_permission_approval_required(self) -> None:
         """Test checking permission that requires approval."""
         perm = ToolPermission(

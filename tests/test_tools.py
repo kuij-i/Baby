@@ -4,15 +4,18 @@ import asyncio
 
 import pytest
 
+from baby.audit import audit_log
 from baby.core import (
     AgentId,
+    AuditEventType,
     PermissionCategory,
     PermissionLevel,
+    TaskId,
     ToolPermission,
     ToolSpec,
 )
-from baby.errors import PermissionDeniedError, ToolNotFoundError
-from baby.permissions import permission_manager
+from baby.errors import ApprovalDeniedError, ApprovalRequiredError, PermissionDeniedError, ToolNotFoundError
+from baby.permissions import approval_manager, permission_manager
 from baby.tools.base import Tool, ToolResult
 from baby.tools.executor import tool_executor
 from baby.tools.registry import tool_registry
@@ -21,8 +24,13 @@ from baby.tools.registry import tool_registry
 class MockTool(Tool):
     """Mock tool for testing."""
 
+    def __init__(self, spec: ToolSpec) -> None:
+        super().__init__(spec)
+        self.calls = 0
+
     async def execute(self, **kwargs) -> ToolResult:
         """Mock execution."""
+        self.calls += 1
         if kwargs.get("fail", False):
             return ToolResult(
                 success=False,
@@ -228,29 +236,32 @@ class TestToolExecutor:
         """Setup test environment."""
         tool_registry.clear()
         permission_manager.clear()
+        approval_manager.clear()
+        audit_log.clear()
+
+    @staticmethod
+    def create_tool(permission: ToolPermission, *, name: str = "test-tool") -> MockTool:
+        spec = ToolSpec(
+            name=name,
+            description="Test",
+            permissions_required=[permission],
+            input_schema={},
+        )
+        return MockTool(spec)
 
     @pytest.mark.asyncio
     async def test_execute_with_permission(self) -> None:
         """Test executing tool with permission."""
-        # Create tool
         perm = ToolPermission(
             category=PermissionCategory.READ_ONLY,
             level=PermissionLevel.ALLOW,
             description="Read-only",
         )
-        spec = ToolSpec(
-            name="test-tool",
-            description="Test",
-            permissions_required=[perm],
-            input_schema={},
-        )
-        tool = MockTool(spec)
+        tool = self.create_tool(perm)
         tool_registry.register(tool)
 
-        # Grant permission
         permission_manager.grant_permission("agent-1", perm)
 
-        # Execute
         agent_id = AgentId(id="agent-1")
         result = await tool_executor.execute(
             tool=tool,
@@ -268,13 +279,7 @@ class TestToolExecutor:
             level=PermissionLevel.ALLOW,
             description="Read-only",
         )
-        spec = ToolSpec(
-            name="test-tool",
-            description="Test",
-            permissions_required=[perm],
-            input_schema={},
-        )
-        tool = MockTool(spec)
+        tool = self.create_tool(perm)
 
         agent_id = AgentId(id="agent-1")
         with pytest.raises(PermissionDeniedError):
@@ -283,6 +288,177 @@ class TestToolExecutor:
                 agent_id=agent_id,
                 data="test",
             )
+        assert tool.calls == 0
+
+    @pytest.mark.asyncio
+    async def test_execute_with_explicit_denied_permission(self) -> None:
+        """Test denied permissions stop execution."""
+        required_permission = ToolPermission(
+            category=PermissionCategory.LOCAL_WRITE,
+            level=PermissionLevel.ALLOW,
+            description="Write",
+        )
+        tool = self.create_tool(required_permission)
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.LOCAL_WRITE,
+                level=PermissionLevel.DENY,
+                description="Write denied",
+            ),
+        )
+
+        with pytest.raises(PermissionDeniedError):
+            await tool_executor.execute(tool=tool, agent_id=AgentId(id="agent-1"))
+
+        assert tool.calls == 0
+
+    @pytest.mark.asyncio
+    async def test_execute_with_approval_required_raises_until_decided(self) -> None:
+        """Test approval-gated tools do not execute until explicitly approved."""
+        permission = ToolPermission(
+            category=PermissionCategory.FINANCIAL_ACTION,
+            level=PermissionLevel.ALLOW,
+            description="Trading action",
+        )
+        tool = self.create_tool(permission, name="trade-tool")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.FINANCIAL_ACTION,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Trading requires approval",
+            ),
+        )
+
+        with pytest.raises(ApprovalRequiredError, match="request_id=") as error:
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                task_id=TaskId(),
+                user_id="user-1",
+            )
+
+        request_id = str(error.value).split("request_id=")[1]
+        request = approval_manager.get_request(request_id)
+
+        assert request.action_type == "trade-tool"
+        assert request.approved is None
+        assert tool.calls == 0
+
+    @pytest.mark.asyncio
+    async def test_execute_with_approved_request_succeeds(self) -> None:
+        """Test explicit approval allows tool execution."""
+        permission = ToolPermission(
+            category=PermissionCategory.DESTRUCTIVE_ACTION,
+            level=PermissionLevel.ALLOW,
+            description="Delete data",
+        )
+        task_id = TaskId()
+        tool = self.create_tool(permission, name="delete-tool")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.DESTRUCTIVE_ACTION,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Delete requires approval",
+            ),
+        )
+
+        with pytest.raises(ApprovalRequiredError, match="request_id=") as error:
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                task_id=task_id,
+                user_id="user-1",
+            )
+        request_id = str(error.value).split("request_id=")[1]
+        approval_manager.decide(request_id, approved=True, user_id="approver-1")
+
+        result = await tool_executor.execute(
+            tool=tool,
+            agent_id=AgentId(id="agent-1"),
+            task_id=task_id,
+            user_id="user-1",
+            approval_request_id=request_id,
+        )
+
+        assert result.success is True
+        assert tool.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_with_denied_request_fails(self) -> None:
+        """Test explicit approval denial blocks tool execution."""
+        permission = ToolPermission(
+            category=PermissionCategory.SECURITY_ACTION,
+            level=PermissionLevel.ALLOW,
+            description="Controlled exploit validation",
+        )
+        task_id = TaskId()
+        tool = self.create_tool(permission, name="security-tool")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.SECURITY_ACTION,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Security actions require approval",
+            ),
+        )
+
+        with pytest.raises(ApprovalRequiredError, match="request_id=") as error:
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                task_id=task_id,
+                user_id="user-1",
+            )
+        request_id = str(error.value).split("request_id=")[1]
+        approval_manager.decide(request_id, approved=False, user_id="approver-1")
+
+        with pytest.raises(ApprovalDeniedError):
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                task_id=task_id,
+                user_id="user-1",
+                approval_request_id=request_id,
+            )
+
+        assert tool.calls == 0
+
+    @pytest.mark.asyncio
+    async def test_execute_records_approval_audit_events(self) -> None:
+        """Test approval request and decision events are audited."""
+        permission = ToolPermission(
+            category=PermissionCategory.DESTRUCTIVE_ACTION,
+            level=PermissionLevel.ALLOW,
+            description="Delete data",
+        )
+        task_id = TaskId()
+        tool = self.create_tool(permission, name="audit-tool")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.DESTRUCTIVE_ACTION,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Delete requires approval",
+            ),
+        )
+
+        with pytest.raises(ApprovalRequiredError, match="request_id=") as error:
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                task_id=task_id,
+                user_id="user-1",
+            )
+        request_id = str(error.value).split("request_id=")[1]
+        approval_manager.decide(request_id, approved=True, user_id="approver-1")
+
+        event_types = [event.event_type for event in audit_log.get_events(task_id=task_id)]
+        assert AuditEventType.PERMISSION_CHECKED in event_types
+        assert AuditEventType.APPROVAL_REQUESTED in event_types
+        assert AuditEventType.APPROVAL_GRANTED in event_types
 
     @pytest.mark.asyncio
     async def test_execute_with_timeout(self) -> None:

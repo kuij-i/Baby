@@ -1,6 +1,6 @@
 """Tests for domain contracts."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -180,6 +180,7 @@ class TestTask:
         assert task.title == "Implement authentication"
         assert isinstance(task.id, TaskId)
         assert isinstance(task.created_at, datetime)
+        assert task.created_at.tzinfo == timezone.utc
 
     def test_task_priority_validation(self) -> None:
         """Test Task priority validation."""
@@ -261,9 +262,11 @@ class TestAgentResult:
             output={"status": "completed"},
             tokens_used=150,
         )
+        assert isinstance(result.id, UUID)
         assert result.success is True
         assert result.error is None
         assert result.tokens_used == 150
+        assert result.timestamp.tzinfo == timezone.utc
 
     def test_agent_result_failure(self) -> None:
         """Test creating a failed AgentResult."""
@@ -283,24 +286,37 @@ class TestVerificationResult:
 
     def test_verification_result_verified(self) -> None:
         """Test creating a verified VerificationResult."""
+        agent_result = AgentResult(
+            step_id=1,
+            agent_id=AgentId(id="agent-1"),
+            success=True,
+        )
         result = VerificationResult(
-            agent_result_id=1,
+            agent_result_id=agent_result.id,
             verified=True,
             verification_method="test-execution",
         )
         assert result.verified is True
+        assert result.agent_result_id == agent_result.id
         assert len(result.issues) == 0
 
     def test_verification_result_with_issues(self) -> None:
         """Test VerificationResult with issues."""
+        agent_result = AgentResult(
+            step_id=1,
+            agent_id=AgentId(id="agent-1"),
+            success=False,
+            error="Agent failed",
+        )
         result = VerificationResult(
-            agent_result_id=1,
+            agent_result_id=agent_result.id,
             verified=False,
             verification_method="test-execution",
             issues=["Test 1 failed", "Test 2 failed"],
         )
         assert result.verified is False
         assert len(result.issues) == 2
+        assert result.timestamp.utcoffset() == timedelta(0)
 
 
 class TestApprovalRequest:
@@ -319,6 +335,7 @@ class TestApprovalRequest:
         )
         assert request.approved is None
         assert request.approval_timestamp is None
+        assert request.created_at.utcoffset() == timedelta(0)
 
 
 class TestArtifact:

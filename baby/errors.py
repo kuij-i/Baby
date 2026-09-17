@@ -31,6 +31,12 @@ class ApprovalRequiredError(BabyException):
     pass
 
 
+class ApprovalDeniedError(BabyException):
+    """Approval was explicitly denied."""
+
+    pass
+
+
 class AgentNotFoundError(BabyException):
     """Agent not found."""
 

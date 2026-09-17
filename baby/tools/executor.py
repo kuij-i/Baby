@@ -5,9 +5,9 @@ from typing import Any, Optional
 
 from baby.audit import audit_log
 from baby.core import AgentId, AuditEventType, TaskId
-from baby.errors import ExecutionError, PermissionDeniedError
+from baby.errors import ApprovalDeniedError, ApprovalRequiredError, ExecutionError, PermissionDeniedError
 from baby.logging import get_logger
-from baby.permissions import permission_manager
+from baby.permissions import approval_manager, permission_manager
 from baby.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
@@ -16,12 +16,21 @@ logger = get_logger(__name__)
 class ToolExecutor:
     """Executes tools with permission checks, timeouts, and audit logging."""
 
+    @staticmethod
+    def _approval_risk_level(permission_names: list[str]) -> str:
+        """Return a deterministic risk level for approval-gated permissions."""
+        critical_permissions = {"financial_action", "security_action", "destructive_action", "secret_access"}
+        if any(name in critical_permissions for name in permission_names):
+            return "critical"
+        return "high"
+
     async def execute(
         self,
         tool: Tool,
         agent_id: AgentId,
         task_id: Optional[TaskId] = None,
         user_id: Optional[str] = None,
+        approval_request_id: Optional[str] = None,
         **kwargs: Any,
     ) -> ToolResult:
         """Execute a tool with all safety checks.
@@ -52,6 +61,7 @@ class ToolExecutor:
             )
 
             # 2. Check permissions
+            approval_required_permissions: list[str] = []
             for required_perm in tool.permissions_required:
                 try:
                     level = permission_manager.check_permission(agent_id_str, required_perm)
@@ -62,6 +72,19 @@ class ToolExecutor:
                         permission=required_perm.category.value,
                         level=level.value,
                     )
+                    audit_log.record(
+                        AuditEventType.PERMISSION_CHECKED,
+                        task_id=task_id,
+                        agent_id=agent_id,
+                        user_id=user_id,
+                        details={
+                            "tool": tool.name,
+                            "permission": required_perm.category.value,
+                            "result": level.value,
+                        },
+                    )
+                    if level.value == "approval_required":
+                        approval_required_permissions.append(required_perm.category.value)
                 except PermissionDeniedError as e:
                     logger.warning(
                         "Permission denied",
@@ -82,6 +105,26 @@ class ToolExecutor:
                         },
                     )
                     raise
+
+            if approval_required_permissions:
+                if approval_request_id is None:
+                    request = approval_manager.request_approval(
+                        task_id=task_id,
+                        agent_id=agent_id,
+                        action_type=tool.name,
+                        reason=(
+                            f"Tool {tool.name} requires approval for permissions: "
+                            f"{', '.join(sorted(approval_required_permissions))}"
+                        ),
+                        risk_level=self._approval_risk_level(approval_required_permissions),
+                        user_id=user_id,
+                    )
+                    raise ApprovalRequiredError(f"Approval required for {tool.name}: request_id={request.request_id}")
+                approval_manager.require_approved(
+                    approval_request_id,
+                    agent_id=agent_id,
+                    action_type=tool.name,
+                )
 
             # 3. Record tool invocation
             audit_log.record(
@@ -138,7 +181,7 @@ class ToolExecutor:
 
             return result
 
-        except PermissionDeniedError:
+        except (ApprovalDeniedError, ApprovalRequiredError, PermissionDeniedError):
             raise
         except Exception as e:
             logger.error(
