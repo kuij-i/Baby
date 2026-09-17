@@ -1,8 +1,9 @@
 """Tests for domain contracts."""
 
-import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
+
+import pytest
 
 from baby.core import (
     AgentCapability,
@@ -11,6 +12,9 @@ from baby.core import (
     AgentSpec,
     ApprovalRequest,
     Artifact,
+    AuditEvent,
+    AuditEventType,
+    MemoryRecord,
     PermissionCategory,
     PermissionLevel,
     Plan,
@@ -179,6 +183,7 @@ class TestTask:
         assert task.title == "Implement authentication"
         assert isinstance(task.id, TaskId)
         assert isinstance(task.created_at, datetime)
+        assert task.created_at.tzinfo == timezone.utc
 
     def test_task_priority_validation(self) -> None:
         """Test Task priority validation."""
@@ -318,6 +323,7 @@ class TestApprovalRequest:
         )
         assert request.approved is None
         assert request.approval_timestamp is None
+        assert request.created_at.tzinfo == timezone.utc
 
 
 class TestArtifact:
@@ -336,3 +342,30 @@ class TestArtifact:
         )
         assert artifact.name == "generated-code.py"
         assert artifact.verified is False
+
+
+class TestTimestampDefaults:
+    def test_timestamp_defaults_are_timezone_aware_utc(self) -> None:
+        plan = Plan(task_id=TaskId(), steps=[PlanStep(step_id=1, description="step")], reasoning="reason")
+        result = AgentResult(step_id=1, agent_id=AgentId(id="agent-1"), success=True)
+        verification = VerificationResult(agent_result_id=1, verified=True, verification_method="test")
+        artifact = Artifact(
+            task_id=TaskId(),
+            agent_id=AgentId(id="agent-1"),
+            name="artifact",
+            artifact_type="text",
+            content="ok",
+        )
+        memory_record = MemoryRecord(record_type="fact", content={"value": "ok"})
+        event = AuditEvent(event_type=AuditEventType.TASK_CREATED)
+
+        assert plan.created_at.tzinfo == timezone.utc
+        assert result.timestamp.tzinfo == timezone.utc
+        assert verification.timestamp.tzinfo == timezone.utc
+        assert artifact.created_at.tzinfo == timezone.utc
+        assert memory_record.created_at.tzinfo == timezone.utc
+        assert event.timestamp.tzinfo == timezone.utc
+
+    def test_audit_event_uses_enum_values_in_model(self) -> None:
+        event = AuditEvent(event_type=AuditEventType.TASK_CREATED)
+        assert event.event_type == AuditEventType.TASK_CREATED.value

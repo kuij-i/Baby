@@ -1,22 +1,22 @@
 """Tests for tool framework."""
 
-import pytest
 import asyncio
-from datetime import datetime
+from datetime import timezone
 
-from baby.tools.base import Tool, ToolResult
-from baby.tools.registry import tool_registry
-from baby.tools.executor import tool_executor
+import pytest
+
 from baby.core import (
-    ToolSpec,
-    ToolPermission,
+    AgentId,
     PermissionCategory,
     PermissionLevel,
-    AgentId,
-    TaskId,
+    ToolPermission,
+    ToolSpec,
 )
+from baby.errors import PermissionDeniedError, ToolNotFoundError
 from baby.permissions import permission_manager
-from baby.errors import ToolNotFoundError, PermissionDeniedError, ExecutionError
+from baby.tools.base import Tool, ToolResult
+from baby.tools.executor import tool_executor
+from baby.tools.registry import tool_registry
 
 
 class MockTool(Tool):
@@ -50,6 +50,7 @@ class TestToolResult:
         assert result.success is True
         assert result.error is None
         assert result.execution_time_ms == 10
+        assert result.timestamp.tzinfo == timezone.utc
 
     def test_tool_result_failure(self) -> None:
         """Test creating a failed tool result."""
@@ -60,6 +61,7 @@ class TestToolResult:
         )
         assert result.success is False
         assert result.error == "Tool failed"
+        assert result.timestamp.tzinfo == timezone.utc
 
 
 class TestTool:
