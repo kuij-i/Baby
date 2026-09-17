@@ -122,6 +122,7 @@ class ToolExecutor:
                     raise ApprovalRequiredError(f"Approval required for {tool.name}: request_id={request.request_id}")
                 approval_manager.require_approved(
                     approval_request_id,
+                    task_id=task_id,
                     agent_id=agent_id,
                     action_type=tool.name,
                 )

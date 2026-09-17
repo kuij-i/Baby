@@ -75,10 +75,17 @@ class ApprovalManager:
             raise ApprovalDeniedError(f"Unknown approval request: {request_id}")
         return self._requests[request_id]
 
-    def require_approved(self, request_id: str, *, agent_id: AgentId, action_type: str) -> ApprovalRequest:
+    def require_approved(
+        self,
+        request_id: str,
+        *,
+        task_id: TaskId | None,
+        agent_id: AgentId,
+        action_type: str,
+    ) -> ApprovalRequest:
         """Require a matching, explicitly approved request."""
         request = self.get_request(request_id)
-        if request.agent_id != agent_id or request.action_type != action_type:
+        if request.task_id != task_id or request.agent_id != agent_id or request.action_type != action_type:
             raise ApprovalDeniedError("Approval request does not match the requested action")
         if request.approved is True:
             return request

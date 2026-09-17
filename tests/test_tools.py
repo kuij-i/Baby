@@ -427,6 +427,45 @@ class TestToolExecutor:
         assert tool.calls == 0
 
     @pytest.mark.asyncio
+    async def test_execute_rejects_approval_from_different_task(self) -> None:
+        """Test approvals cannot be replayed across tasks."""
+        permission = ToolPermission(
+            category=PermissionCategory.DESTRUCTIVE_ACTION,
+            level=PermissionLevel.ALLOW,
+            description="Delete data",
+        )
+        approved_task_id = TaskId()
+        other_task_id = TaskId()
+        tool = self.create_tool(permission, name="task-bound-tool")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.DESTRUCTIVE_ACTION,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Delete requires approval",
+            ),
+        )
+
+        with pytest.raises(ApprovalRequiredError, match="request_id=") as error:
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                task_id=approved_task_id,
+                user_id="user-1",
+            )
+        request_id = str(error.value).split("request_id=")[1]
+        approval_manager.decide(request_id, approved=True, user_id="approver-1")
+
+        with pytest.raises(ApprovalDeniedError, match="does not match"):
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                task_id=other_task_id,
+                user_id="user-1",
+                approval_request_id=request_id,
+            )
+
+    @pytest.mark.asyncio
     async def test_execute_records_approval_audit_events(self) -> None:
         """Test approval request and decision events are audited."""
         permission = ToolPermission(

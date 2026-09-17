@@ -79,7 +79,7 @@ class Orchestrator:
                 if failed_dependencies:
                     result = AgentResult(
                         step_id=step.step_id,
-                        agent_id=step.agent_id or AgentId(id="dependency-blocked"),
+                        agent_id=AgentId(id="dependency-blocked"),
                         success=False,
                         error=f"Blocked by failed dependencies: {failed_dependencies}",
                     )
