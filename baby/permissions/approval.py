@@ -23,6 +23,15 @@ class ApprovalManager:
         user_id: str | None = None,
     ) -> ApprovalRequest:
         """Create and audit a new approval request."""
+        for existing_request in self._requests.values():
+            if (
+                existing_request.task_id == task_id
+                and existing_request.agent_id == agent_id
+                and existing_request.action_type == action_type
+                and existing_request.approved is None
+            ):
+                return existing_request
+
         request = ApprovalRequest(
             task_id=task_id,
             agent_id=agent_id,
@@ -54,6 +63,8 @@ class ApprovalManager:
     ) -> ApprovalRequest:
         """Store and audit an explicit approval decision."""
         request = self.get_request(request_id)
+        if request.approved is not None:
+            raise ApprovalDeniedError(f"Approval decision already recorded for {request.action_type}")
         request.approved = approved
         request.approval_timestamp = utc_now()
         audit_log.record(

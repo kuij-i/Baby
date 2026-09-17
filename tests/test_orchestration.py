@@ -300,6 +300,44 @@ class TestOrchestrator:
         assert blocked_agent.seen_contexts == []
 
     @pytest.mark.asyncio
+    async def test_execute_task_continues_ready_steps_after_failure(self, monkeypatch) -> None:
+        task = Task(title="Test Task", description="Test execution")
+        failing_agent = TrackingAgent(
+            AgentSpec(id=AgentId(id="agent-1"), name="Agent 1", description="Test", role="tester"),
+            succeed=False,
+        )
+        independent_agent = TrackingAgent(
+            AgentSpec(id=AgentId(id="agent-2"), name="Agent 2", description="Test", role="tester")
+        )
+        dependent_agent = TrackingAgent(
+            AgentSpec(id=AgentId(id="agent-3"), name="Agent 3", description="Test", role="tester")
+        )
+        agent_registry.register(failing_agent)
+        agent_registry.register(independent_agent)
+        agent_registry.register(dependent_agent)
+
+        async def planned_task(_: Task) -> Plan:
+            return Plan(
+                task_id=task.id,
+                reasoning="continue ready steps",
+                steps=[
+                    PlanStep(step_id=1, description="Fails", agent_id=failing_agent.spec.id),
+                    PlanStep(step_id=2, description="Independent", agent_id=independent_agent.spec.id),
+                    PlanStep(step_id=3, description="Blocked", agent_id=dependent_agent.spec.id, dependencies=[1]),
+                ],
+            )
+
+        monkeypatch.setattr(task_planner, "plan", planned_task)
+
+        result = await orchestrator.execute_task(task)
+
+        assert result is not None
+        assert result.step_id == 1
+        assert result.success is False
+        assert [context.plan_step.step_id for context in independent_agent.seen_contexts] == [2]
+        assert dependent_agent.seen_contexts == []
+
+    @pytest.mark.asyncio
     async def test_execute_task_rejects_invalid_dependencies(self, monkeypatch) -> None:
         task = Task(title="Test Task", description="Test execution")
         agent_id = AgentId(id="test-agent")

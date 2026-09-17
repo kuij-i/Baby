@@ -59,6 +59,7 @@ class Orchestrator:
             result: Optional[AgentResult] = None
             pending_steps = {step.step_id: step for step in plan.steps}
             completed_results: dict[int, AgentResult] = {}
+            execution_order: list[int] = []
             while pending_steps:
                 ready_steps = [
                     step
@@ -97,15 +98,25 @@ class Orchestrator:
                         user_id,
                     )
                 completed_results[step.step_id] = result
+                execution_order.append(step.step_id)
                 del pending_steps[step.step_id]
-                if not result.success:
-                    audit_log.record(
-                        AuditEventType.TASK_FAILED,
-                        task_id=task.id,
-                        user_id=user_id,
-                        details={"step_id": step.step_id, "error": result.error},
-                    )
-                    return result
+
+            failed_results = [
+                completed_results[step_id] for step_id in execution_order if not completed_results[step_id].success
+            ]
+            if failed_results:
+                first_failure = failed_results[0]
+                audit_log.record(
+                    AuditEventType.TASK_FAILED,
+                    task_id=task.id,
+                    user_id=user_id,
+                    details={
+                        "step_id": first_failure.step_id,
+                        "error": first_failure.error,
+                        "failed_step_ids": [failed_result.step_id for failed_result in failed_results],
+                    },
+                )
+                return first_failure
 
             audit_log.record(
                 AuditEventType.TASK_COMPLETED,

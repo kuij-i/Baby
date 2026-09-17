@@ -374,6 +374,46 @@ class TestToolExecutor:
         assert tool.calls == 0
 
     @pytest.mark.asyncio
+    async def test_execute_reuses_pending_approval_request(self) -> None:
+        """Test repeated approval requests reuse the same pending request."""
+        permission = ToolPermission(
+            category=PermissionCategory.FINANCIAL_ACTION,
+            level=PermissionLevel.ALLOW,
+            description="Trading action",
+        )
+        task_id = TaskId()
+        tool = self.create_tool(permission, name="trade-tool")
+        permission_manager.grant_permission(
+            "agent-1",
+            ToolPermission(
+                category=PermissionCategory.FINANCIAL_ACTION,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Trading requires approval",
+            ),
+        )
+
+        with pytest.raises(ApprovalRequiredError, match="request_id=") as first_error:
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                task_id=task_id,
+                user_id="user-1",
+            )
+        with pytest.raises(ApprovalRequiredError, match="request_id=") as second_error:
+            await tool_executor.execute(
+                tool=tool,
+                agent_id=AgentId(id="agent-1"),
+                task_id=task_id,
+                user_id="user-1",
+            )
+
+        first_request_id = str(first_error.value).split("request_id=")[1]
+        second_request_id = str(second_error.value).split("request_id=")[1]
+
+        assert first_request_id == second_request_id
+        assert len(audit_log.get_events(task_id=task_id, event_type=AuditEventType.APPROVAL_REQUESTED)) == 1
+
+    @pytest.mark.asyncio
     async def test_execute_with_approved_request_succeeds(self) -> None:
         """Test explicit approval allows tool execution."""
         permission = ToolPermission(
@@ -491,6 +531,21 @@ class TestToolExecutor:
                 user_id="user-1",
                 approval_request_id=request_id,
             )
+
+    @pytest.mark.asyncio
+    async def test_approval_decision_cannot_be_overwritten(self) -> None:
+        """Test approval decisions are immutable once recorded."""
+        request = approval_manager.request_approval(
+            task_id=TaskId(),
+            agent_id=AgentId(id="agent-1"),
+            action_type="trade-tool",
+            reason="Need approval",
+            risk_level="critical",
+        )
+        approval_manager.decide(str(request.request_id), approved=False, user_id="approver-1")
+
+        with pytest.raises(ApprovalDeniedError, match="already recorded"):
+            approval_manager.decide(str(request.request_id), approved=True, user_id="approver-2")
 
     @pytest.mark.asyncio
     async def test_execute_records_approval_audit_events(self) -> None:
