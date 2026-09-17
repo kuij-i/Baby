@@ -1,7 +1,7 @@
-"""Planning and orchestration modules for BABY.
+"""Orchestration package exports for BABY.
 
-This package contains the planning and execution coordination components of the
-BABY operating system.
+This module intentionally exposes only orchestration-related symbols. The
+planning package owns planning exports to avoid circular imports.
 """
 
 from baby.orchestration.orchestrator import Orchestrator, orchestrator
