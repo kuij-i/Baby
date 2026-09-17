@@ -9,6 +9,7 @@ from baby.core import (
     AgentId,
     AgentResult,
     AgentSpec,
+    AuditEventType,
     PermissionCategory,
     PermissionLevel,
     PlanStep,
