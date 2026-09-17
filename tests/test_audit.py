@@ -1,7 +1,5 @@
 """Tests for audit logging."""
 
-import pytest
-
 from baby.audit import audit_log
 from baby.core import AgentId, AuditEventType, TaskId
 
@@ -67,27 +65,17 @@ class TestAuditLog:
         task_id2 = TaskId()
         agent_id = AgentId(id="agent-1")
 
-        audit_log.record(
-            AuditEventType.AGENT_SELECTED, task_id=task_id1, agent_id=agent_id
-        )
-        audit_log.record(
-            AuditEventType.PERMISSION_CHECKED, task_id=task_id1, agent_id=agent_id
-        )
-        audit_log.record(
-            AuditEventType.AGENT_SELECTED, task_id=task_id2, agent_id=agent_id
-        )
+        audit_log.record(AuditEventType.AGENT_SELECTED, task_id=task_id1, agent_id=agent_id)
+        audit_log.record(AuditEventType.PERMISSION_CHECKED, task_id=task_id1, agent_id=agent_id)
+        audit_log.record(AuditEventType.AGENT_SELECTED, task_id=task_id2, agent_id=agent_id)
 
-        events = audit_log.get_events(
-            task_id=task_id1, event_type=AuditEventType.AGENT_SELECTED
-        )
+        events = audit_log.get_events(task_id=task_id1, event_type=AuditEventType.AGENT_SELECTED)
         assert len(events) == 1
 
     def test_event_with_details(self) -> None:
         """Test recording event with details."""
         task_id = TaskId()
         details = {"agent_name": "coding-agent", "capability": "code-review"}
-        event = audit_log.record(
-            AuditEventType.AGENT_SELECTED, task_id=task_id, details=details
-        )
+        event = audit_log.record(AuditEventType.AGENT_SELECTED, task_id=task_id, details=details)
 
         assert event.details == details

@@ -1,6 +1,6 @@
 """Tests for the memory subsystem."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -53,7 +53,7 @@ class TestInMemoryStore:
         record = MemoryRecord(
             record_type="temporary",
             content={"value": "expired"},
-            expires_at=datetime.utcnow() - timedelta(seconds=1),
+            expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
         )
         self.store.save(record)
 

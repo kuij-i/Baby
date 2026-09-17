@@ -3,12 +3,12 @@
 import asyncio
 from typing import Any, Optional
 
-from baby.tools.base import Tool, ToolResult
-from baby.permissions import permission_manager
 from baby.audit import audit_log
 from baby.core import AgentId, AuditEventType, TaskId
-from baby.errors import PermissionDeniedError, ExecutionError
+from baby.errors import ExecutionError, PermissionDeniedError
 from baby.logging import get_logger
+from baby.permissions import permission_manager
+from baby.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
 
@@ -25,23 +25,23 @@ class ToolExecutor:
         **kwargs: Any,
     ) -> ToolResult:
         """Execute a tool with all safety checks.
-        
+
         Args:
             tool: Tool to execute
             agent_id: Agent executing the tool
             task_id: Associated task ID
             user_id: User who authorized execution
             **kwargs: Tool input arguments
-            
+
         Returns:
             ToolResult with execution outcome
-            
+
         Raises:
             PermissionDeniedError: If agent lacks required permissions
             ExecutionError: If execution fails
         """
         agent_id_str = str(agent_id)
-        
+
         try:
             # 1. Validate input
             tool.validate_input(**kwargs)
@@ -54,9 +54,7 @@ class ToolExecutor:
             # 2. Check permissions
             for required_perm in tool.permissions_required:
                 try:
-                    level = permission_manager.check_permission(
-                        agent_id_str, required_perm
-                    )
+                    level = permission_manager.check_permission(agent_id_str, required_perm)
                     logger.info(
                         "Permission checked",
                         tool=tool.name,
@@ -101,9 +99,7 @@ class ToolExecutor:
                     timeout=tool.spec.timeout_seconds,
                 )
             except asyncio.TimeoutError:
-                error_msg = (
-                    f"Tool {tool.name} timed out after {tool.spec.timeout_seconds}s"
-                )
+                error_msg = f"Tool {tool.name} timed out after {tool.spec.timeout_seconds}s"
                 logger.error(error_msg, tool=tool.name, agent_id=agent_id_str)
                 result = ToolResult(
                     success=False,

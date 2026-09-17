@@ -1,10 +1,9 @@
 """Structured logging for BABY."""
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import structlog
-from structlog.types import EventDict
 
 
 def configure_logging(level: str = "INFO") -> None:

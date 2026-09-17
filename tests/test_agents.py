@@ -1,7 +1,6 @@
 """Tests for agent framework."""
 
 import pytest
-from datetime import datetime
 
 from baby.agents.base import Agent
 from baby.agents.registry import agent_registry
@@ -13,10 +12,6 @@ from baby.core import (
     ExecutionContext,
     PlanStep,
     Task,
-    TaskId,
-    ToolPermission,
-    PermissionCategory,
-    PermissionLevel,
 )
 from baby.errors import AgentNotFoundError
 

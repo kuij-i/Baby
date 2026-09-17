@@ -2,13 +2,13 @@
 
 import pytest
 
-from baby.permissions.manager import permission_manager
 from baby.core import (
     PermissionCategory,
     PermissionLevel,
     ToolPermission,
 )
 from baby.errors import PermissionDeniedError
+from baby.permissions.manager import permission_manager
 
 
 class TestPermissionManager:
