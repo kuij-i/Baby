@@ -120,11 +120,11 @@ isort baby tests
   - [x] Logging infrastructure
   - [x] Error handling
   - [x] Testing foundation
-- [ ] PHASE 2: Agent framework
-- [ ] PHASE 3: Permission system
-- [ ] PHASE 4: Tool framework
-- [ ] PHASE 5: Planner + orchestrator
-- [ ] PHASE 6: Memory system
+- [x] PHASE 2: Agent framework
+- [x] PHASE 3: Permission system & Tool framework
+- [x] PHASE 4: Planner & Orchestration
+- [x] PHASE 5: Memory system
+- [x] PHASE 6: Model Provider Abstraction & Approval Enforcement
 - [ ] PHASE 7: Coding agent
 - [ ] PHASE 8: First complete vertical slice
 - [ ] PHASE 9: UI

@@ -35,19 +35,19 @@ docs/                      # Documentation
 
 ## Implementation Phase
 
-**Current:** PHASE 1 (Foundation) - COMPLETE
-- [x] Project structure
-- [x] Configuration
-- [x] Typed contracts
-- [x] Logging
-- [x] Error handling
-- [x] Testing foundation
+**Current:** PHASE 6 (Model Provider Abstraction & Approval Enforcement) - COMPLETE
+- [x] Foundation (Phase 1)
+- [x] Agent framework & permissions (Phase 2 & 3)
+- [x] Tool framework with fail-closed approval enforcement (Phase 3 & 6)
+- [x] Planning & orchestration (Phase 4)
+- [x] Memory subsystem (Phase 5)
+- [x] Model provider abstraction & OpenAI-compatible provider (Phase 6)
+- [x] GitHub Actions CI workflow (Phase 6)
 
-**Next:** PHASE 2 (Agent Framework)
-- Agent registry
-- Base agent class
-- Capability system
-- Execution interface
+**Next:** PHASE 7 (Coding Agent or First Specialist Agent)
+- Repository-bounded coding tools
+- Specialist agent implementation
+- Model provider integration with agent execution
 
 ## Core Contracts
 

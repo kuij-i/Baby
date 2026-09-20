@@ -1,17 +1,20 @@
 """Tests for tool framework."""
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
+from baby.audit import audit_log
 from baby.core import (
     AgentId,
+    AuditEventType,
     PermissionCategory,
     PermissionLevel,
     ToolPermission,
     ToolSpec,
 )
-from baby.errors import PermissionDeniedError, ToolNotFoundError
+from baby.errors import ApprovalRequiredError, PermissionDeniedError, ToolNotFoundError
 from baby.permissions import permission_manager
 from baby.tools.base import Tool, ToolResult
 from baby.tools.executor import tool_executor
@@ -21,8 +24,14 @@ from baby.tools.registry import tool_registry
 class MockTool(Tool):
     """Mock tool for testing."""
 
+    def __init__(self, spec, execute_fn=None):
+        super().__init__(spec)
+        self._execute_fn = execute_fn
+
     async def execute(self, **kwargs) -> ToolResult:
         """Mock execution."""
+        if self._execute_fn:
+            return await self._execute_fn(**kwargs)
         if kwargs.get("fail", False):
             return ToolResult(
                 success=False,
@@ -228,6 +237,7 @@ class TestToolExecutor:
         """Setup test environment."""
         tool_registry.clear()
         permission_manager.clear()
+        audit_log.clear()
 
     @pytest.mark.asyncio
     async def test_execute_with_permission(self) -> None:
@@ -318,3 +328,131 @@ class TestToolExecutor:
 
         assert result.success is False
         assert "timed out" in result.error
+
+    # -- Phase 6: Approval enforcement tests -----------------------------------
+
+    @pytest.mark.asyncio
+    async def test_approval_required_blocks_execution(self) -> None:
+        """ApprovalRequiredError is raised when permission level is APPROVAL_REQUIRED."""
+        perm = ToolPermission(
+            category=PermissionCategory.LOCAL_WRITE,
+            level=PermissionLevel.APPROVAL_REQUIRED,
+            description="Write access needs approval",
+        )
+        spec = ToolSpec(
+            name="write-tool",
+            description="A tool that writes",
+            permissions_required=[perm],
+            input_schema={},
+        )
+        tool = MockTool(spec)
+
+        # Grant permission at APPROVAL_REQUIRED level
+        permission_manager.grant_permission("agent-1", perm)
+
+        agent_id = AgentId(id="agent-1")
+        with pytest.raises(ApprovalRequiredError) as exc_info:
+            await tool_executor.execute(tool=tool, agent_id=agent_id, data="test")
+
+        assert "write-tool" in str(exc_info.value)
+        assert "local_write" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_approval_required_tool_never_called(self) -> None:
+        """Prove the underlying tool.execute() is never invoked when approval is required."""
+        perm = ToolPermission(
+            category=PermissionCategory.DESTRUCTIVE_ACTION,
+            level=PermissionLevel.APPROVAL_REQUIRED,
+            description="Destructive action needs approval",
+        )
+        spec = ToolSpec(
+            name="destructive-tool",
+            description="A dangerous tool",
+            permissions_required=[perm],
+            input_schema={},
+        )
+
+        execute_spy = AsyncMock(return_value=ToolResult(success=True, execution_time_ms=1))
+        tool = MockTool(spec, execute_fn=execute_spy)
+
+        permission_manager.grant_permission("agent-1", perm)
+
+        agent_id = AgentId(id="agent-1")
+        with pytest.raises(ApprovalRequiredError):
+            await tool_executor.execute(tool=tool, agent_id=agent_id)
+
+        execute_spy.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_approval_required_audit_event(self) -> None:
+        """An APPROVAL_REQUESTED audit event is recorded before the error is raised."""
+        perm = ToolPermission(
+            category=PermissionCategory.FINANCIAL_ACTION,
+            level=PermissionLevel.APPROVAL_REQUIRED,
+            description="Financial action needs approval",
+        )
+        spec = ToolSpec(
+            name="trade-tool",
+            description="Financial tool",
+            permissions_required=[perm],
+            input_schema={},
+        )
+        tool = MockTool(spec)
+
+        permission_manager.grant_permission("agent-1", perm)
+
+        agent_id = AgentId(id="agent-1")
+        with pytest.raises(ApprovalRequiredError):
+            await tool_executor.execute(tool=tool, agent_id=agent_id)
+
+        events = audit_log.get_events(event_type=AuditEventType.APPROVAL_REQUESTED)
+        assert len(events) == 1
+        assert events[0].details["tool"] == "trade-tool"
+        assert events[0].details["result"] == "approval_required"
+
+    @pytest.mark.asyncio
+    async def test_approval_required_no_tool_invoked_event(self) -> None:
+        """No TOOL_INVOKED audit event is recorded when approval blocks execution."""
+        perm = ToolPermission(
+            category=PermissionCategory.EXECUTE_COMMAND,
+            level=PermissionLevel.APPROVAL_REQUIRED,
+            description="Command execution needs approval",
+        )
+        spec = ToolSpec(
+            name="exec-tool",
+            description="Exec tool",
+            permissions_required=[perm],
+            input_schema={},
+        )
+        tool = MockTool(spec)
+
+        permission_manager.grant_permission("agent-1", perm)
+
+        agent_id = AgentId(id="agent-1")
+        with pytest.raises(ApprovalRequiredError):
+            await tool_executor.execute(tool=tool, agent_id=agent_id)
+
+        invoked_events = audit_log.get_events(event_type=AuditEventType.TOOL_INVOKED)
+        assert len(invoked_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_allowed_permission_still_executes(self) -> None:
+        """Verify that ALLOW permission still results in normal execution after the fix."""
+        perm = ToolPermission(
+            category=PermissionCategory.READ_ONLY,
+            level=PermissionLevel.ALLOW,
+            description="Read-only",
+        )
+        spec = ToolSpec(
+            name="safe-tool",
+            description="Safe tool",
+            permissions_required=[perm],
+            input_schema={},
+        )
+        tool = MockTool(spec)
+        permission_manager.grant_permission("agent-1", perm)
+
+        agent_id = AgentId(id="agent-1")
+        result = await tool_executor.execute(tool=tool, agent_id=agent_id, data="hello")
+        assert result.success is True
+        assert result.output["input"]["data"] == "hello"

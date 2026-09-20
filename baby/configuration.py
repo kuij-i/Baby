@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Model Configuration
     default_model: str = "gpt-4"
     openai_api_key: Optional[str] = None
+    openai_base_url: Optional[str] = None  # Override for NVIDIA/local endpoints
     anthropic_api_key: Optional[str] = None
 
     # Database

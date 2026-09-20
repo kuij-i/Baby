@@ -4,8 +4,8 @@ import asyncio
 from typing import Any, Optional
 
 from baby.audit import audit_log
-from baby.core import AgentId, AuditEventType, TaskId
-from baby.errors import ExecutionError, PermissionDeniedError
+from baby.core import AgentId, AuditEventType, PermissionLevel, TaskId
+from baby.errors import ApprovalRequiredError, ExecutionError, PermissionDeniedError
 from baby.logging import get_logger
 from baby.permissions import permission_manager
 from baby.tools.base import Tool, ToolResult
@@ -38,6 +38,7 @@ class ToolExecutor:
 
         Raises:
             PermissionDeniedError: If agent lacks required permissions
+            ApprovalRequiredError: If tool requires approval that has not been granted
             ExecutionError: If execution fails
         """
         agent_id_str = str(agent_id)
@@ -55,6 +56,30 @@ class ToolExecutor:
             for required_perm in tool.permissions_required:
                 try:
                     level = permission_manager.check_permission(agent_id_str, required_perm)
+                    if level == PermissionLevel.APPROVAL_REQUIRED:
+                        logger.warning(
+                            "Approval required — tool execution blocked",
+                            tool=tool.name,
+                            agent_id=agent_id_str,
+                            permission=required_perm.category.value,
+                        )
+                        audit_log.record(
+                            AuditEventType.APPROVAL_REQUESTED,
+                            task_id=task_id,
+                            agent_id=agent_id,
+                            user_id=user_id,
+                            details={
+                                "tool": tool.name,
+                                "permission": required_perm.category.value,
+                                "result": "approval_required",
+                            },
+                        )
+                        raise ApprovalRequiredError(
+                            f"Tool '{tool.name}' requires approval for "
+                            f"permission '{required_perm.category.value}' "
+                            f"(agent: {agent_id_str})"
+                        )
+
                     logger.info(
                         "Permission checked",
                         tool=tool.name,
@@ -138,7 +163,7 @@ class ToolExecutor:
 
             return result
 
-        except PermissionDeniedError:
+        except (PermissionDeniedError, ApprovalRequiredError):
             raise
         except Exception as e:
             logger.error(
