@@ -64,7 +64,8 @@ class OpenAIProvider(ModelProvider):
         return list(self._supported_models)
 
     def is_available(self) -> bool:
-        return self._api_key is not None and len(self._api_key) > 0
+        """Return True if required API credentials are configured."""
+        return bool(self._api_key and self._api_key.strip())
 
     # -- Completions -----------------------------------------------------------
 

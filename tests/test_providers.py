@@ -236,6 +236,10 @@ class TestOpenAIProvider:
         provider = OpenAIProvider(api_key="")
         assert provider.is_available() is False
 
+    def test_is_not_available_with_whitespace_key(self) -> None:
+        provider = OpenAIProvider(api_key="   ")
+        assert provider.is_available() is False
+
     def test_name(self) -> None:
         provider = OpenAIProvider(api_key="sk-test")
         assert provider.name == "openai"

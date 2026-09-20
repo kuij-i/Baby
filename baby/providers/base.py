@@ -31,7 +31,10 @@ class ModelProvider(ABC):
 
     @abstractmethod
     def is_available(self) -> bool:
-        """Return True if the provider is configured and reachable."""
+        """Return True if the provider is configured and ready for use.
+
+        This is a local configuration/credential check and does not make network calls.
+        """
 
     @abstractmethod
     async def complete(
