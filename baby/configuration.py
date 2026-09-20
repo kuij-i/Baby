@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     # Security
     enable_approval_workflow: bool = True
 
+    # Coding Subsystem
+    coding_repo_root: Optional[str] = None
+    coding_max_file_size_bytes: int = 1_048_576  # 1 MB default limit
+    coding_max_list_entries: int = 1000
+    coding_max_list_depth: int = 20
+
     class Config:
         env_file = ".env"
         case_sensitive = False

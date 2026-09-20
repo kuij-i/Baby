@@ -19,6 +19,18 @@ class ValidationError(BabyException):
     pass
 
 
+class PathTraversalError(ValidationError):
+    """Attempted path traversal outside allowed repository boundary."""
+
+    pass
+
+
+class RepositoryBoundaryError(ValidationError):
+    """Attempted access violating repository boundary (e.g. .git access or unconfigured root)."""
+
+    pass
+
+
 class PermissionDeniedError(BabyException):
     """Permission denied."""
 

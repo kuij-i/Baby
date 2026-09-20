@@ -125,7 +125,7 @@ isort baby tests
 - [x] PHASE 4: Planner & Orchestration
 - [x] PHASE 5: Memory system
 - [x] PHASE 6: Model Provider Abstraction & Approval Enforcement
-- [ ] PHASE 7: Coding agent
+- [x] PHASE 7: Coding agent & repository-bounded tools
 - [ ] PHASE 8: First complete vertical slice
 - [ ] PHASE 9: UI
 - [ ] PHASE 10: Additional specialist teams

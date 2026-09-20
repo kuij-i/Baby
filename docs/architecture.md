@@ -73,7 +73,7 @@ Matches tasks/steps to appropriate agents.
 #### 4. Specialist Agents
 
 Domain-specific AI agents:
-- **Coding Agent** - Software development tasks
+- **Coding Agent** - Software development tasks strictly bounded to an explicitly configured repository root (`CODING_REPO_ROOT`). Operates via `ListFilesTool`, `ReadFileTool`, and `WriteFileTool`. Zero shell, zero subprocess, and `.git` protected. Write operations enforce approval.
 - **Trading Agent** - Financial analysis and trading
 - **Copywriting Agent** - Content creation and editing
 - **Testing Agent** - QA and test automation
