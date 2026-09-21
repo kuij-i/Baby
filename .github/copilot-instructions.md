@@ -35,7 +35,7 @@ docs/                      # Documentation
 
 ## Implementation Phase
 
-**Current:** PHASE 7 (Coding Agent & Repository-Bounded Tools) - COMPLETE
+**Current:** PHASE 8 (Iterative Coding Agent Orchestration) - COMPLETE
 - [x] Foundation (Phase 1)
 - [x] Agent framework & permissions (Phase 2 & 3)
 - [x] Tool framework with fail-closed approval enforcement (Phase 3 & 6)
@@ -44,8 +44,9 @@ docs/                      # Documentation
 - [x] Model provider abstraction & OpenAI-compatible provider (Phase 6)
 - [x] GitHub Actions CI workflow (Phase 6)
 - [x] Repository-bounded coding tools & CodingAgent (Phase 7)
+- [x] Bounded iterative CodingAgent orchestration loop (Phase 8)
 
-**Next:** PHASE 8 (First Complete Vertical Slice)
+**Next:** PHASE 9 (First Complete Vertical Slice)
 - End-to-end task execution with planner, CodingAgent, and bounded tools
 - Verification layer integration
 - Multi-step code modification and validation

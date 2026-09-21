@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     coding_max_file_size_bytes: int = 1_048_576  # 1 MB default limit
     coding_max_list_entries: int = 1000
     coding_max_list_depth: int = 20
+    coding_max_iterations: int = 10
+    coding_max_tool_calls_per_iteration: int = 5
 
     class Config:
         env_file = ".env"

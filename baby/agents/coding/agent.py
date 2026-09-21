@@ -4,11 +4,14 @@ import json
 from typing import Any, Dict, List, Optional
 
 from baby.agents.base import Agent
+from baby.audit import audit_log
+from baby.configuration import settings
 from baby.core import (
     AgentCapability,
     AgentId,
     AgentResult,
     AgentSpec,
+    AuditEventType,
     ExecutionContext,
     PermissionCategory,
     PermissionLevel,
@@ -81,11 +84,15 @@ class CodingAgent(Agent):
         spec: Optional[AgentSpec] = None,
         provider: Optional[ModelProvider] = None,
         repo_root: Optional[str] = None,
+        max_iterations: Optional[int] = None,
+        max_tool_calls_per_iteration: Optional[int] = None,
     ) -> None:
         actual_spec = spec or create_default_coding_spec()
         super().__init__(actual_spec)
         self._provider = provider
         self._repo_root = repo_root
+        self._max_iterations = max_iterations
+        self._max_tool_calls_per_iteration = max_tool_calls_per_iteration
 
         # Instantiate repository-bounded tools
         self._tools: Dict[str, Tool] = {
@@ -189,11 +196,15 @@ class CodingAgent(Agent):
         context: ExecutionContext,
         provider: ModelProvider,
     ) -> AgentResult:
-        """Execute task by presenting bounded tools to the model provider."""
+        """Execute task by presenting bounded tools to the model provider in an iterative loop."""
         step = context.plan_step
         tool_defs = self.get_tool_definitions()
+        max_iterations = self._max_iterations or settings.coding_max_iterations
+        max_tool_calls_per_iteration = (
+            self._max_tool_calls_per_iteration or settings.coding_max_tool_calls_per_iteration
+        )
 
-        messages = [
+        messages: List[ChatMessage] = [
             ChatMessage(
                 role="system",
                 content=(
@@ -208,28 +219,102 @@ class CodingAgent(Agent):
             ),
         ]
 
-        response = await provider.complete_with_tools(
-            messages=messages,
-            tools=tool_defs,
-            model=self.spec.model,
-        )
+        all_tool_outputs: List[Dict[str, Any]] = []
+        total_tokens = 0
 
-        tokens = response.usage.total_tokens if response.usage else None
+        for iteration in range(1, max_iterations + 1):
+            logger.info(
+                "CodingAgent starting iteration",
+                agent_id=self.id,
+                iteration=iteration,
+                max_iterations=max_iterations,
+            )
 
-        # Process tool calls if the model invoked any
-        if response.tool_calls:
-            outputs: List[Dict[str, Any]] = []
-            for tc in response.tool_calls:
+            try:
+                response = await provider.complete_with_tools(
+                    messages=messages,
+                    tools=tool_defs,
+                    model=self.spec.model,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Model provider completion failed",
+                    agent_id=self.id,
+                    iteration=iteration,
+                    error=str(exc),
+                )
+                return AgentResult(
+                    step_id=step.step_id,
+                    agent_id=self.spec.id,
+                    success=False,
+                    output={"tool_results": all_tool_outputs, "iterations": iteration},
+                    error=f"Model provider error: {str(exc)}",
+                    tokens_used=total_tokens or None,
+                )
+
+            if response.usage and response.usage.total_tokens:
+                total_tokens += response.usage.total_tokens
+
+            # If model proposes no tool calls, it has completed the step
+            if not response.tool_calls:
+                logger.info(
+                    "CodingAgent completed without further tool calls",
+                    agent_id=self.id,
+                    iteration=iteration,
+                )
+                return AgentResult(
+                    step_id=step.step_id,
+                    agent_id=self.spec.id,
+                    success=True,
+                    output={
+                        "response": response.content,
+                        "tool_results": all_tool_outputs,
+                        "iterations": iteration,
+                    },
+                    tokens_used=total_tokens or None,
+                )
+
+            # Enforce per-iteration tool-call limit to prevent uncontrolled execution
+            if len(response.tool_calls) > max_tool_calls_per_iteration:
+                error_msg = (
+                    f"Model requested {len(response.tool_calls)} tool calls in iteration {iteration}, "
+                    f"exceeding per-iteration limit of {max_tool_calls_per_iteration}"
+                )
+                logger.warning(error_msg, agent_id=self.id)
+                return AgentResult(
+                    step_id=step.step_id,
+                    agent_id=self.spec.id,
+                    success=False,
+                    output={"tool_results": all_tool_outputs, "iterations": iteration},
+                    error=error_msg,
+                    tokens_used=total_tokens or None,
+                )
+
+            # Record assistant message with tool calls in conversation history
+            messages.append(
+                ChatMessage(
+                    role="assistant",
+                    content=response.content or "",
+                    tool_calls=response.tool_calls,
+                )
+            )
+
+            # Execute tool calls through ToolExecutor
+            for idx, tc in enumerate(response.tool_calls):
                 fn = tc.get("function", {})
                 tool_name = fn.get("name")
+                tool_call_id = tc.get("id") or f"call_{iteration}_{idx}"
+
                 if not tool_name or tool_name not in self._tools:
+                    error_msg = f"Unknown or missing tool requested by model: '{tool_name}'"
+                    logger.warning(error_msg, agent_id=self.id)
                     return AgentResult(
                         step_id=step.step_id,
                         agent_id=self.spec.id,
                         success=False,
-                        output=outputs,
-                        error=f"Unknown or missing tool requested by model: '{tool_name}'",
-                        tokens_used=tokens,
+                        output={"tool_results": all_tool_outputs, "iterations": iteration},
+                        error=error_msg,
+                        tokens_used=total_tokens or None,
                     )
 
                 raw_args = fn.get("arguments", "{}")
@@ -238,48 +323,105 @@ class CodingAgent(Agent):
                     if not isinstance(args, dict):
                         args = {}
                 except Exception as exc:
+                    error_msg = f"Malformed arguments for tool '{tool_name}': {str(exc)}"
+                    logger.warning(error_msg, agent_id=self.id)
                     return AgentResult(
                         step_id=step.step_id,
                         agent_id=self.spec.id,
                         success=False,
-                        output=outputs,
-                        error=f"Malformed arguments for tool '{tool_name}': {str(exc)}",
-                        tokens_used=tokens,
+                        output={"tool_results": all_tool_outputs, "iterations": iteration},
+                        error=error_msg,
+                        tokens_used=total_tokens or None,
                     )
 
                 tool = self._tools[tool_name]
-                tool_res = await tool_executor.execute(
-                    tool=tool,
-                    agent_id=self.spec.id,
-                    task_id=context.task_id,
-                    user_id=context.task.user_id,
-                    **args,
-                )
-                outputs.append({"tool": tool_name, "result": tool_res.output, "success": tool_res.success})
-                if not tool_res.success:
+                try:
+                    tool_res = await tool_executor.execute(
+                        tool=tool,
+                        agent_id=self.spec.id,
+                        task_id=context.task_id,
+                        user_id=context.task.user_id,
+                        **args,
+                    )
+                except (ApprovalRequiredError, PermissionDeniedError) as exc:
+                    logger.warning(
+                        "CodingAgent execution blocked by security policy",
+                        agent_id=self.id,
+                        error=str(exc),
+                    )
                     return AgentResult(
                         step_id=step.step_id,
                         agent_id=self.spec.id,
                         success=False,
-                        output=outputs,
-                        error=tool_res.error,
-                        tokens_used=tokens,
+                        output={"tool_results": all_tool_outputs, "iterations": iteration},
+                        error=str(exc),
+                        tokens_used=total_tokens or None,
                     )
 
-            return AgentResult(
-                step_id=step.step_id,
-                agent_id=self.spec.id,
-                success=True,
-                output={"response": response.content, "tool_results": outputs},
-                tokens_used=tokens,
-            )
+                all_tool_outputs.append(
+                    {
+                        "tool": tool_name,
+                        "result": tool_res.output,
+                        "success": tool_res.success,
+                        "iteration": iteration,
+                    }
+                )
 
+                if not tool_res.success:
+                    logger.warning(
+                        "Tool execution returned failure",
+                        tool=tool_name,
+                        error=tool_res.error,
+                        iteration=iteration,
+                    )
+                    return AgentResult(
+                        step_id=step.step_id,
+                        agent_id=self.spec.id,
+                        success=False,
+                        output={"tool_results": all_tool_outputs, "iterations": iteration},
+                        error=tool_res.error,
+                        tokens_used=total_tokens or None,
+                    )
+
+                # Feed successful result back into conversation for next iteration
+                tool_content = (
+                    json.dumps(tool_res.output)
+                    if isinstance(tool_res.output, (dict, list))
+                    else str(tool_res.output or "")
+                )
+                messages.append(
+                    ChatMessage(
+                        role="tool",
+                        content=tool_content,
+                        name=tool_name,
+                        tool_call_id=tool_call_id,
+                    )
+                )
+
+        # Iteration limit reached without model conclusion
+        error_msg = f"CodingAgent reached maximum iteration limit of {max_iterations} without completing task"
+        logger.warning(error_msg, agent_id=self.id, max_iterations=max_iterations)
+        audit_log.record(
+            AuditEventType.ERROR,
+            task_id=context.task_id,
+            agent_id=self.spec.id,
+            user_id=context.task.user_id,
+            details={
+                "error_type": "iteration_limit_exceeded",
+                "iterations": max_iterations,
+                "message": error_msg,
+            },
+        )
         return AgentResult(
             step_id=step.step_id,
             agent_id=self.spec.id,
-            success=True,
-            output=response.content,
-            tokens_used=tokens,
+            success=False,
+            output={
+                "tool_results": all_tool_outputs,
+                "iterations": max_iterations,
+            },
+            error=error_msg,
+            tokens_used=total_tokens or None,
         )
 
     async def _execute_heuristic(self, context: ExecutionContext) -> AgentResult:
