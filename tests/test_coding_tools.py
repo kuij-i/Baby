@@ -55,6 +55,9 @@ def temp_repo():
         (dotgit / "config").write_text("[core]\n\trepositoryformatversion = 0", encoding="utf-8")
         (dotgit / "HEAD").write_text("ref: refs/heads/main", encoding="utf-8")
 
+        # Create project dotfiles (.gitignore)
+        (repo_path / ".gitignore").write_text("*.pyc\n__pycache__/\n", encoding="utf-8")
+
         yield repo_path
 
 
@@ -133,6 +136,15 @@ class TestRepositoryBoundary:
         """Nested attempts to reference .git are forbidden."""
         with pytest.raises(RepositoryBoundaryError, match="forbidden"):
             resolve_safe_path("src/.git", repo_root=str(temp_repo), allow_nonexistent=True)
+
+    def test_gitignore_and_dotfiles_allowed(self, temp_repo: Path) -> None:
+        """Project dotfiles like .gitignore and .gitattributes are allowed."""
+        resolved = resolve_safe_path(".gitignore", repo_root=str(temp_repo))
+        assert resolved == (temp_repo / ".gitignore").resolve()
+
+        # Non-existent project dotfile for write is also allowed
+        resolved_new = resolve_safe_path(".gitattributes", repo_root=str(temp_repo), allow_nonexistent=True)
+        assert resolved_new == (temp_repo / ".gitattributes").resolve()
 
     def test_symlink_escape_rejected(self, temp_repo: Path) -> None:
         """Symlinks pointing outside the repository root are rejected."""
@@ -219,6 +231,13 @@ class TestReadFileTool:
         assert result.success is False
         assert "traverses outside" in result.error
 
+    @pytest.mark.asyncio
+    async def test_read_gitignore_allowed(self, temp_repo: Path) -> None:
+        tool = ReadFileTool(repo_root=str(temp_repo))
+        result = await tool.execute(path=".gitignore")
+        assert result.success is True
+        assert "*.pyc" in result.output["content"]
+
 
 # ---------------------------------------------------------------------------
 # ListFilesTool Tests
@@ -236,10 +255,11 @@ class TestListFilesTool:
         paths = [e["path"] for e in result.output["entries"]]
         assert "hello.py" in paths
         assert "README.md" in paths
-        # .git must be excluded
+        assert ".gitignore" in paths
+        # .git directory and internals must be excluded
         for p in paths:
-            assert not p.startswith(".git")
-            assert "/.git" not in p
+            parts = Path(p).parts
+            assert ".git" not in parts
 
     @pytest.mark.asyncio
     async def test_list_nested_directory(self, temp_repo: Path) -> None:
@@ -333,6 +353,13 @@ class TestWriteFileTool:
         result = await tool.execute(path="src", content="text")
         assert result.success is False
         assert "Cannot overwrite directory" in result.error
+
+    @pytest.mark.asyncio
+    async def test_write_gitignore_allowed(self, temp_repo: Path) -> None:
+        tool = WriteFileTool(repo_root=str(temp_repo))
+        result = await tool.execute(path=".gitignore", content="*.pyc\n*.log\n")
+        assert result.success is True
+        assert (temp_repo / ".gitignore").read_text(encoding="utf-8") == "*.pyc\n*.log\n"
 
 
 # ---------------------------------------------------------------------------

@@ -65,7 +65,7 @@ class ListFilesTool(Tool):
 
             if not recursive:
                 for item in sorted(target_dir.iterdir(), key=lambda p: p.name.lower()):
-                    if item.name == ".git" or item.name.startswith(".git"):
+                    if item.name.lower() == ".git":
                         continue
                     try:
                         rel_path = item.relative_to(root).as_posix()
@@ -87,9 +87,7 @@ class ListFilesTool(Tool):
                 # Recursive traversal bounded by depth and limit
                 for root_dir, dirs, files in os.walk(target_dir, followlinks=False):
                     # Exclude .git directories immediately from descent
-                    dirs[:] = [
-                        d for d in sorted(dirs, key=lambda x: x.lower()) if d != ".git" and not d.startswith(".git")
-                    ]
+                    dirs[:] = [d for d in sorted(dirs, key=lambda x: x.lower()) if d.lower() != ".git"]
                     current_path = Path(root_dir)
 
                     try:
@@ -124,7 +122,7 @@ class ListFilesTool(Tool):
 
                     # Record files
                     for f in sorted(files, key=lambda x: x.lower()):
-                        if f == ".git" or f.startswith(".git"):
+                        if f.lower() == ".git":
                             continue
                         file_path = current_path / f
                         try:

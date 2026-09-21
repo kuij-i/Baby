@@ -218,32 +218,53 @@ class CodingAgent(Agent):
 
         # Process tool calls if the model invoked any
         if response.tool_calls:
-            outputs = []
+            outputs: List[Dict[str, Any]] = []
             for tc in response.tool_calls:
                 fn = tc.get("function", {})
                 tool_name = fn.get("name")
-                raw_args = fn.get("arguments", "{}")
-                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-
-                if tool_name in self._tools:
-                    tool = self._tools[tool_name]
-                    tool_res = await tool_executor.execute(
-                        tool=tool,
+                if not tool_name or tool_name not in self._tools:
+                    return AgentResult(
+                        step_id=step.step_id,
                         agent_id=self.spec.id,
-                        task_id=context.task_id,
-                        user_id=context.task.user_id,
-                        **args,
+                        success=False,
+                        output=outputs,
+                        error=f"Unknown or missing tool requested by model: '{tool_name}'",
+                        tokens_used=tokens,
                     )
-                    outputs.append({"tool": tool_name, "result": tool_res.output, "success": tool_res.success})
-                    if not tool_res.success:
-                        return AgentResult(
-                            step_id=step.step_id,
-                            agent_id=self.spec.id,
-                            success=False,
-                            output=outputs,
-                            error=tool_res.error,
-                            tokens_used=tokens,
-                        )
+
+                raw_args = fn.get("arguments", "{}")
+                try:
+                    args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                    if not isinstance(args, dict):
+                        args = {}
+                except Exception as exc:
+                    return AgentResult(
+                        step_id=step.step_id,
+                        agent_id=self.spec.id,
+                        success=False,
+                        output=outputs,
+                        error=f"Malformed arguments for tool '{tool_name}': {str(exc)}",
+                        tokens_used=tokens,
+                    )
+
+                tool = self._tools[tool_name]
+                tool_res = await tool_executor.execute(
+                    tool=tool,
+                    agent_id=self.spec.id,
+                    task_id=context.task_id,
+                    user_id=context.task.user_id,
+                    **args,
+                )
+                outputs.append({"tool": tool_name, "result": tool_res.output, "success": tool_res.success})
+                if not tool_res.success:
+                    return AgentResult(
+                        step_id=step.step_id,
+                        agent_id=self.spec.id,
+                        success=False,
+                        output=outputs,
+                        error=tool_res.error,
+                        tokens_used=tokens,
+                    )
 
             return AgentResult(
                 step_id=step.step_id,

@@ -214,6 +214,132 @@ class TestCodingAgentExecution:
         assert result.output["tool_results"][0]["tool"] == "read_file"
         assert result.output["tool_results"][0]["result"]["content"] == "print('baby')"
 
+    @pytest.mark.asyncio
+    async def test_execute_provider_list_files(self, temp_repo: Path) -> None:
+        tool_call = {
+            "id": "tc_list",
+            "type": "function",
+            "function": {
+                "name": "list_files",
+                "arguments": '{"path": "."}',
+            },
+        }
+        provider = MockProvider(response_content="Files listed", tool_calls=[tool_call])
+        agent = CodingAgent(provider=provider, repo_root=str(temp_repo))
+        permission_manager.grant_permission(
+            "coding-agent",
+            ToolPermission(
+                category=PermissionCategory.LOCAL_READ,
+                level=PermissionLevel.ALLOW,
+                description="Read",
+            ),
+        )
+        task = Task(title="List", description="List repo")
+        step = PlanStep(step_id=1, description="List files")
+        context = ExecutionContext(task_id=task.id, plan_step=step, task=task, agent=agent.spec)
+
+        result = await agent.execute(context)
+        assert result.success is True
+        assert len(result.output["tool_results"]) == 1
+        assert result.output["tool_results"][0]["tool"] == "list_files"
+
+    @pytest.mark.asyncio
+    async def test_execute_provider_write_file_approval_required(self, temp_repo: Path) -> None:
+        tool_call = {
+            "id": "tc_write",
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": '{"path": "from_model.py", "content": "x = 1"}',
+            },
+        }
+        provider = MockProvider(response_content="Writing code", tool_calls=[tool_call])
+        agent = CodingAgent(provider=provider, repo_root=str(temp_repo))
+        permission_manager.grant_permission(
+            "coding-agent",
+            ToolPermission(
+                category=PermissionCategory.LOCAL_WRITE,
+                level=PermissionLevel.APPROVAL_REQUIRED,
+                description="Write needs approval",
+            ),
+        )
+        task = Task(title="Write", description="Write file")
+        step = PlanStep(step_id=1, description="Write from model")
+        context = ExecutionContext(task_id=task.id, plan_step=step, task=task, agent=agent.spec)
+
+        result = await agent.execute(context)
+        assert result.success is False
+        assert "requires approval" in result.error
+        assert not (temp_repo / "from_model.py").exists()
+
+    @pytest.mark.asyncio
+    async def test_execute_provider_write_file_allowed(self, temp_repo: Path) -> None:
+        tool_call = {
+            "id": "tc_write_allow",
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": '{"path": "allowed_model.py", "content": "x = 99"}',
+            },
+        }
+        provider = MockProvider(response_content="Writing code", tool_calls=[tool_call])
+        agent = CodingAgent(provider=provider, repo_root=str(temp_repo))
+        permission_manager.grant_permission(
+            "coding-agent",
+            ToolPermission(
+                category=PermissionCategory.LOCAL_WRITE,
+                level=PermissionLevel.ALLOW,
+                description="Write allowed",
+            ),
+        )
+        task = Task(title="Write", description="Write file")
+        step = PlanStep(step_id=1, description="Write allowed")
+        context = ExecutionContext(task_id=task.id, plan_step=step, task=task, agent=agent.spec)
+
+        result = await agent.execute(context)
+        assert result.success is True
+        assert (temp_repo / "allowed_model.py").read_text(encoding="utf-8") == "x = 99"
+
+    @pytest.mark.asyncio
+    async def test_execute_provider_unknown_tool_fails_safely(self, temp_repo: Path) -> None:
+        tool_call = {
+            "id": "tc_unknown",
+            "type": "function",
+            "function": {
+                "name": "execute_shell_command",
+                "arguments": '{"command": "whoami"}',
+            },
+        }
+        provider = MockProvider(response_content="Executing command", tool_calls=[tool_call])
+        agent = CodingAgent(provider=provider, repo_root=str(temp_repo))
+        task = Task(title="Unknown", description="Unknown tool call")
+        step = PlanStep(step_id=1, description="Run command")
+        context = ExecutionContext(task_id=task.id, plan_step=step, task=task, agent=agent.spec)
+
+        result = await agent.execute(context)
+        assert result.success is False
+        assert "Unknown or missing tool" in result.error
+
+    @pytest.mark.asyncio
+    async def test_execute_provider_malformed_arguments_fails_safely(self, temp_repo: Path) -> None:
+        tool_call = {
+            "id": "tc_bad_args",
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "arguments": "not valid json {",
+            },
+        }
+        provider = MockProvider(response_content="Reading", tool_calls=[tool_call])
+        agent = CodingAgent(provider=provider, repo_root=str(temp_repo))
+        task = Task(title="Malformed", description="Bad args tool call")
+        step = PlanStep(step_id=1, description="Read with bad args")
+        context = ExecutionContext(task_id=task.id, plan_step=step, task=task, agent=agent.spec)
+
+        result = await agent.execute(context)
+        assert result.success is False
+        assert "Malformed arguments" in result.error
+
 
 # ---------------------------------------------------------------------------
 # Security Invariant & Regression Checks

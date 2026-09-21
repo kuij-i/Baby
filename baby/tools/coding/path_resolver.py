@@ -102,10 +102,11 @@ def resolve_safe_path(
             logger.warning("Parent path traversal attempt blocked", path=path, root=str(root))
             raise PathTraversalError(f"Parent directory of '{path}' traverses outside the repository root")
 
-    # 2. .git protection check: no component of the relative path may be .git
+    # 2. .git protection check: no path component may be exactly '.git'
+    #    This blocks .git/ directory and all its contents (.git/config, .git/HEAD, etc.)
+    #    but allows project files like .gitignore, .gitattributes, .gitmodules.
     for part in rel.parts:
-        part_lower = part.lower()
-        if part_lower == ".git" or part_lower.startswith(".git"):
+        if part.lower() == ".git":
             logger.warning("Attempted access to .git blocked", path=path)
             raise RepositoryBoundaryError(f"Access to .git directory or files is strictly forbidden: '{path}'")
 
