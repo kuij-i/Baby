@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 
 from baby.api.auth import AuthenticatedCaller, get_current_caller
 from baby.audit import audit_log
@@ -27,22 +27,21 @@ def list_audit_events(
     offset: int = Query(0, ge=0),
     caller: AuthenticatedCaller = Depends(get_current_caller),
 ) -> List[Dict[str, Any]]:
-    """Retrieve filtered, engagement-scoped audit records with sensitive details redacted."""
-    target_user = user_id or engagement_id
+    """Retrieve filtered, engagement-scoped audit records with sensitive details redacted.
 
-    # Engagement isolation enforcement
-    if not caller.is_admin:
-        if target_user and not caller.can_access_engagement(target_user):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to access the requested engagement scope",
-            )
-        if not target_user:
-            # Default to the caller's allowed engagement
-            if len(caller.allowed_engagements) == 1:
-                target_user = next(iter(caller.allowed_engagements))
-            elif not caller.allowed_engagements:
-                return []
+    Authorization: caller.restrict_to_engagement() enforces that the requested scope
+    is within the caller's server-side-configured allowed_engagements set.
+    The X-Engagement-ID header (captured at auth time) is not used here; callers
+    must pass engagement_id as a query parameter to scope their query explicitly.
+    """
+    # Resolve the target engagement, enforcing authorization server-side.
+    # Prefer explicit user_id over engagement_id (both are engagement scope selectors).
+    requested_scope = user_id or engagement_id
+    target_user = caller.restrict_to_engagement(requested_scope)
+
+    # If non-admin caller has no scope and nothing resolved, return empty (safe default)
+    if not caller.is_admin and target_user is None:
+        return []
 
     events = audit_log.get_events(
         task_id=TaskId(id=task_id) if task_id else None,

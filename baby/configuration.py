@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     api_admin_token: Optional[str] = None
     api_require_auth: bool = True
     metrics_enabled: bool = True
+    # Comma-separated list of engagement IDs the operator token is authorized for.
+    # Controls server-side what an authenticated operator can access.
+    # The client cannot expand this set via request headers or parameters.
+    # Example: "engagement-A,engagement-B"
+    # Default empty string → operator is scoped to the single "default" engagement.
+    operator_engagements: str = ""
 
     class Config:
         env_file = ".env"

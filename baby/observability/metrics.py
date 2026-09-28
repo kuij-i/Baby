@@ -135,9 +135,18 @@ class MetricsCollector:
             self.record_latency("tool_execution_duration_ms", duration_ms, labels={"tool": tool_name})
 
     def record_api_request(self, method: str, endpoint: str, status_code: int) -> None:
+        # Normalize endpoint to a bounded prefix to prevent label cardinality abuse.
+        # Only the first path segment is used as the label key; path parameters
+        # (UUIDs, arbitrary IDs) are collapsed to avoid unbounded cardinality.
+        known_prefixes = {"/health", "/metrics", "/tasks", "/workers", "/agents", "/audit"}
+        endpoint_label = "other"
+        for prefix in known_prefixes:
+            if endpoint == prefix or endpoint.startswith(prefix + "/"):
+                endpoint_label = prefix
+                break
         self.increment_counter(
             "api_requests_total",
-            labels={"method": method, "endpoint": endpoint, "status": str(status_code)},
+            labels={"method": method, "endpoint": endpoint_label, "status": str(status_code)},
         )
 
     def record_error(self, error_type: str) -> None:
@@ -146,15 +155,10 @@ class MetricsCollector:
     def get_snapshot(self) -> Dict[str, Any]:
         """Produce a complete read-only snapshot of all metric series."""
         with self._lock:
-            counters_snap: Dict[str, Dict[str, int]] = {
-                name: dict(series) for name, series in self._counters.items()
-            }
-            gauges_snap: Dict[str, Dict[str, float]] = {
-                name: dict(series) for name, series in self._gauges.items()
-            }
+            counters_snap: Dict[str, Dict[str, int]] = {name: dict(series) for name, series in self._counters.items()}
+            gauges_snap: Dict[str, Dict[str, float]] = {name: dict(series) for name, series in self._gauges.items()}
             latencies_snap: Dict[str, Dict[str, Dict[str, Any]]] = {
-                name: {k: v.to_dict() for k, v in series.items()}
-                for name, series in self._latencies.items()
+                name: {k: v.to_dict() for k, v in series.items()} for name, series in self._latencies.items()
             }
             return {
                 "counters": counters_snap,

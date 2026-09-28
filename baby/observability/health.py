@@ -62,7 +62,7 @@ class HealthChecker:
             logger.error("Memory health check failed", exc=exc)
             return ComponentHealth(
                 status=HealthStatus.UNAVAILABLE,
-                message=f"Memory store failure: {exc}",
+                message="Memory store unavailable",
             )
 
     def check_audit(self) -> ComponentHealth:
@@ -78,7 +78,7 @@ class HealthChecker:
             logger.error("Audit health check failed", exc=exc)
             return ComponentHealth(
                 status=HealthStatus.UNAVAILABLE,
-                message=f"Audit subsystem failure: {exc}",
+                message="Audit subsystem unavailable",
             )
 
     def check_agents(self) -> ComponentHealth:
@@ -107,7 +107,7 @@ class HealthChecker:
             logger.error("Agent health check failed", exc=exc)
             return ComponentHealth(
                 status=HealthStatus.DEGRADED,
-                message=f"Agent registry error: {exc}",
+                message="Agent registry check failed",
             )
 
     def check_tools(self) -> ComponentHealth:
@@ -123,7 +123,7 @@ class HealthChecker:
             logger.error("Tool health check failed", exc=exc)
             return ComponentHealth(
                 status=HealthStatus.DEGRADED,
-                message=f"Tool registry error: {exc}",
+                message="Tool registry check failed",
             )
 
     def check_providers(self) -> ComponentHealth:
@@ -152,7 +152,7 @@ class HealthChecker:
             logger.error("Provider health check failed", exc=exc)
             return ComponentHealth(
                 status=HealthStatus.DEGRADED,
-                message=f"Provider check error: {exc}",
+                message="Provider availability check failed",
             )
 
     def check_health(self) -> SystemHealth:
