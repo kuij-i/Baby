@@ -8,8 +8,9 @@ from typing import Optional
 
 from baby.agents import agent_registry
 from baby.audit import audit_log
-from baby.core import AgentId, AgentResult, AuditEventType, ExecutionContext, Plan, PlanStep, Task
+from baby.core import AgentId, AgentResult, AuditEventType, ExecutionContext, Plan, PlanStep, Task, TaskStatus
 from baby.logging import get_logger
+from baby.observability import task_tracker
 from baby.planning.planner import task_planner
 from baby.planning.selection import selection_logic
 
@@ -25,6 +26,12 @@ class Orchestrator:
         user_id: Optional[str] = None,
     ) -> Optional[AgentResult]:
         """Execute a task end-to-end and return the final step result."""
+        # Ensure task has user_id if provided
+        if user_id and not task.user_id:
+            task.user_id = user_id
+
+        task_tracker.register_task(task, status=TaskStatus.IN_PROGRESS)
+
         logger.info(
             "Starting task execution",
             task_id=str(task.id),
@@ -34,7 +41,7 @@ class Orchestrator:
         audit_log.record(
             AuditEventType.TASK_CREATED,
             task_id=task.id,
-            user_id=user_id,
+            user_id=user_id or task.user_id,
             details={
                 "title": task.title,
                 "description": task.description,
@@ -44,38 +51,57 @@ class Orchestrator:
 
         try:
             plan = await task_planner.plan(task)
+            task_tracker.set_plan(task.id, plan)
             audit_log.record(
                 AuditEventType.PLAN_CREATED,
                 task_id=task.id,
-                user_id=user_id,
+                user_id=user_id or task.user_id,
                 details={"step_count": len(plan.steps), "reasoning": plan.reasoning},
             )
 
             result: Optional[AgentResult] = None
             for step in plan.steps:
-                result = await self._execute_step(step, task, plan, user_id)
+                result = await self._execute_step(step, task, plan, user_id or task.user_id)
                 if not result.success:
+                    task_tracker.update_status(
+                        task.id,
+                        TaskStatus.FAILED,
+                        error=result.error,
+                        result=result,
+                        agent_id=result.agent_id,
+                    )
                     audit_log.record(
                         AuditEventType.TASK_FAILED,
                         task_id=task.id,
-                        user_id=user_id,
+                        user_id=user_id or task.user_id,
                         details={"step_id": step.step_id, "error": result.error},
                     )
                     return result
 
+            task_tracker.update_status(
+                task.id,
+                TaskStatus.COMPLETED,
+                result=result,
+                agent_id=result.agent_id if result else None,
+            )
             audit_log.record(
                 AuditEventType.TASK_COMPLETED,
                 task_id=task.id,
-                user_id=user_id,
+                user_id=user_id or task.user_id,
                 details={"steps_executed": len(plan.steps)},
             )
             return result
         except Exception as exc:
+            task_tracker.update_status(
+                task.id,
+                TaskStatus.FAILED,
+                error=str(exc),
+            )
             logger.error("Task execution failed", exc=exc, task_id=str(task.id))
             audit_log.record(
                 AuditEventType.ERROR,
                 task_id=task.id,
-                user_id=user_id,
+                user_id=user_id or task.user_id,
                 details={"error": str(exc)},
             )
             raise

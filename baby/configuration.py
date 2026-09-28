@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     coding_max_iterations: int = 10
     coding_max_tool_calls_per_iteration: int = 5
 
+    # Observability & API
+    api_auth_token: Optional[str] = None
+    api_admin_token: Optional[str] = None
+    api_require_auth: bool = True
+    metrics_enabled: bool = True
+
     class Config:
         env_file = ".env"
         case_sensitive = False

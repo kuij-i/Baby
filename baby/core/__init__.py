@@ -17,9 +17,13 @@ from baby.core.contracts import (
     PlanStep,
     Task,
     TaskId,
+    TaskRecord,
+    TaskStatus,
     ToolPermission,
     ToolSpec,
     VerificationResult,
+    WorkerInfo,
+    WorkerStatus,
 )
 
 __all__ = [
@@ -39,7 +43,11 @@ __all__ = [
     "PlanStep",
     "Task",
     "TaskId",
+    "TaskRecord",
+    "TaskStatus",
     "ToolPermission",
     "ToolSpec",
     "VerificationResult",
+    "WorkerInfo",
+    "WorkerStatus",
 ]

@@ -242,3 +242,58 @@ class AuditEvent(BaseModel):
 
     class Config:
         use_enum_values = True
+
+
+class TaskStatus(str, Enum):
+    """Execution status of a task."""
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    AWAITING_APPROVAL = "awaiting_approval"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class WorkerStatus(str, Enum):
+    """Operational status of a worker."""
+
+    IDLE = "idle"
+    BUSY = "busy"
+    PAUSED = "paused"
+    STOPPED = "stopped"
+    ERROR = "error"
+
+
+class TaskRecord(BaseModel):
+    """Comprehensive read-only operational record for a task."""
+
+    task_id: TaskId
+    title: str
+    description: str = ""
+    status: TaskStatus = TaskStatus.PENDING
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+    user_id: Optional[str] = None
+    priority: int = 0
+    assigned_agent_id: Optional[AgentId] = None
+    assigned_worker_id: Optional[str] = None
+    plan: Optional[Plan] = None
+    result: Optional[AgentResult] = None
+    error: Optional[str] = None
+    approvals: List[ApprovalRequest] = Field(default_factory=list)
+    verifications: List[VerificationResult] = Field(default_factory=list)
+
+
+class WorkerInfo(BaseModel):
+    """Operational information about a worker."""
+
+    worker_id: str
+    status: WorkerStatus = WorkerStatus.IDLE
+    current_task_id: Optional[TaskId] = None
+    tasks_completed: int = 0
+    tasks_failed: int = 0
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    last_heartbeat_at: datetime = Field(default_factory=datetime.utcnow)
+    last_error: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
