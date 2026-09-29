@@ -2,6 +2,12 @@
 
 Maintains operational state for tasks, including execution status, plan
 steps, assigned agents/workers, approvals, verifications, and errors.
+
+Phase 10 additions:
+- Enforced valid state transitions (invalid transitions raise InvalidStateTransitionError)
+- Terminal state protection (COMPLETED/FAILED/CANCELLED cannot transition)
+- Restart recovery: recover_stale_tasks() marks IN_PROGRESS tasks as FAILED
+  on startup to ensure fail-closed behavior after unexpected process termination
 """
 
 import threading
@@ -10,6 +16,7 @@ from typing import Dict, List, Optional
 from uuid import UUID
 
 from baby.core import (
+    VALID_TASK_TRANSITIONS,
     AgentId,
     AgentResult,
     ApprovalRequest,
@@ -20,11 +27,18 @@ from baby.core import (
     TaskStatus,
     VerificationResult,
 )
+from baby.errors import InvalidStateTransitionError
+from baby.logging import get_logger
 from baby.observability.metrics import metrics_collector
+
+logger = get_logger(__name__)
+
+# States that cannot accept further transitions (terminal states)
+_TERMINAL_STATES = {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
 
 
 class TaskTracker:
-    """Thread-safe in-memory task tracker."""
+    """Thread-safe in-memory task tracker with enforced state machine."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -63,13 +77,33 @@ class TaskTracker:
         result: Optional[AgentResult] = None,
         agent_id: Optional[AgentId] = None,
     ) -> Optional[TaskRecord]:
-        """Update task execution status."""
+        """Update task execution status, enforcing valid state transitions.
+
+        Raises:
+            InvalidStateTransitionError: If the transition from current to target
+                state is not permitted by the task state machine. Terminal states
+                (COMPLETED, FAILED, CANCELLED) cannot transition further.
+        """
         with self._lock:
             key = str(task_id)
             if key not in self._tasks:
                 return None
 
             record = self._tasks[key]
+            current = record.status
+
+            # Enforce state machine: reject invalid transitions
+            allowed = VALID_TASK_TRANSITIONS.get(current, set())
+            if status not in allowed:
+                if current in _TERMINAL_STATES:
+                    raise InvalidStateTransitionError(
+                        f"Task {task_id} is in terminal state '{current}' " f"and cannot transition to '{status}'"
+                    )
+                raise InvalidStateTransitionError(
+                    f"Invalid task state transition: '{current}' → '{status}'. "
+                    f"Allowed transitions from '{current}': {sorted(str(s) for s in allowed) or 'none (terminal)'}"
+                )
+
             record.status = status
             record.updated_at = datetime.utcnow()
 
@@ -80,19 +114,50 @@ class TaskTracker:
             if agent_id is not None:
                 record.assigned_agent_id = agent_id
 
-            if status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            if status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
                 record.completed_at = record.updated_at
                 duration_ms = (record.completed_at - record.created_at).total_seconds() * 1000
                 if status == TaskStatus.COMPLETED:
                     metrics_collector.record_task_completed(duration_ms)
-                else:
+                elif status == TaskStatus.FAILED:
                     metrics_collector.record_task_failed(duration_ms, error_type=error or "generic")
+                else:
+                    # CANCELLED — count as failed for metrics
+                    metrics_collector.record_task_failed(duration_ms, error_type="cancelled")
             elif status == TaskStatus.IN_PROGRESS:
                 metrics_collector.record_task_started()
             elif status == TaskStatus.AWAITING_APPROVAL:
                 metrics_collector.record_approval_requested()
 
             return record
+
+    def recover_stale_tasks(self, stale_error: str = "Recovered after unexpected process restart") -> List[TaskRecord]:
+        """Mark all IN_PROGRESS tasks as FAILED for fail-closed restart recovery.
+
+        Must be called at application startup before accepting new work.
+        Prevents stale 'in_progress' records from remaining indefinitely after
+        a crash or unclean shutdown.
+
+        Returns:
+            List of TaskRecords that were transitioned to FAILED.
+        """
+        recovered = []
+        with self._lock:
+            for record in self._tasks.values():
+                if record.status == TaskStatus.IN_PROGRESS:
+                    record.status = TaskStatus.FAILED
+                    record.error = stale_error
+                    record.updated_at = datetime.utcnow()
+                    record.completed_at = record.updated_at
+                    duration_ms = (record.completed_at - record.created_at).total_seconds() * 1000
+                    metrics_collector.record_task_failed(duration_ms, error_type="stale_restart")
+                    recovered.append(record)
+                    logger.warning(
+                        "Stale in-progress task recovered as failed",
+                        task_id=str(record.task_id),
+                        title=record.title,
+                    )
+        return recovered
 
     def set_plan(self, task_id: TaskId, plan: Plan) -> Optional[TaskRecord]:
         """Attach plan to a task."""

@@ -22,11 +22,26 @@ class ReadOnlyMiddleware(BaseHTTPMiddleware):
             )
 
         start_time = time.perf_counter()
-        response = await call_next(request)
+        endpoint = request.url.path
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            metrics_collector.record_api_request(
+                method=request.method,
+                endpoint=endpoint,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+            metrics_collector.record_latency("api_request_duration_ms", duration_ms, labels={"endpoint": endpoint})
+            return Response(
+                content='{"detail":"Internal server error"}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                media_type="application/json",
+            )
+
         duration_ms = (time.perf_counter() - start_time) * 1000
 
         # Record API request metric
-        endpoint = request.url.path
         metrics_collector.record_api_request(
             method=request.method,
             endpoint=endpoint,

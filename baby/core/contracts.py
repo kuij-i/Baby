@@ -245,13 +245,40 @@ class AuditEvent(BaseModel):
 
 
 class TaskStatus(str, Enum):
-    """Execution status of a task."""
+    """Execution status of a task.
+
+    State machine:
+        PENDING → IN_PROGRESS | CANCELLED
+        IN_PROGRESS → AWAITING_APPROVAL | COMPLETED | FAILED | CANCELLED
+        AWAITING_APPROVAL → IN_PROGRESS | FAILED | CANCELLED
+        COMPLETED → (terminal — no further transitions)
+        FAILED → (terminal — no further transitions)
+        CANCELLED → (terminal — no further transitions)
+    """
 
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     AWAITING_APPROVAL = "awaiting_approval"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+# Explicit valid task state transitions.
+# Terminal states (COMPLETED, FAILED, CANCELLED) have no outgoing transitions.
+VALID_TASK_TRANSITIONS: dict[str, set[str]] = {
+    TaskStatus.PENDING: {TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED},
+    TaskStatus.IN_PROGRESS: {
+        TaskStatus.AWAITING_APPROVAL,
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+    },
+    TaskStatus.AWAITING_APPROVAL: {TaskStatus.IN_PROGRESS, TaskStatus.FAILED, TaskStatus.CANCELLED},
+    TaskStatus.COMPLETED: set(),  # terminal
+    TaskStatus.FAILED: set(),  # terminal
+    TaskStatus.CANCELLED: set(),  # terminal
+}
 
 
 class WorkerStatus(str, Enum):

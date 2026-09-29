@@ -316,6 +316,7 @@ class TestTaskTracker:
     def test_update_status_to_completed(self):
         task = Task(title="T", description="d")
         task_tracker.register_task(task, status=TaskStatus.PENDING)
+        task_tracker.update_status(task.id, TaskStatus.IN_PROGRESS)
         updated = task_tracker.update_status(task.id, TaskStatus.COMPLETED)
         assert updated is not None
         assert updated.status == TaskStatus.COMPLETED
@@ -324,6 +325,7 @@ class TestTaskTracker:
     def test_update_status_to_failed(self):
         task = Task(title="T", description="d")
         task_tracker.register_task(task)
+        task_tracker.update_status(task.id, TaskStatus.IN_PROGRESS)
         updated = task_tracker.update_status(task.id, TaskStatus.FAILED, error="boom")
         assert updated.status == TaskStatus.FAILED
         assert updated.error == "boom"
@@ -336,6 +338,7 @@ class TestTaskTracker:
         t2 = Task(title="B", description="b")
         task_tracker.register_task(t1)
         task_tracker.register_task(t2)
+        task_tracker.update_status(t1.id, TaskStatus.IN_PROGRESS)
         task_tracker.update_status(t1.id, TaskStatus.COMPLETED)
 
         completed = task_tracker.list_tasks(status=TaskStatus.COMPLETED)
@@ -377,6 +380,7 @@ class TestTaskTracker:
     def test_metrics_recorded_on_lifecycle(self):
         task = Task(title="T", description="d", priority=5)
         task_tracker.register_task(task)
+        task_tracker.update_status(task.id, TaskStatus.IN_PROGRESS)
         task_tracker.update_status(task.id, TaskStatus.COMPLETED)
         snap = metrics_collector.get_snapshot()
         assert snap["counters"].get("tasks_completed_total", {}).get("", 0) == 1

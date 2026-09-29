@@ -1,6 +1,7 @@
 """Core domain contracts and types for the BABY orchestration platform."""
 
 from baby.core.contracts import (
+    VALID_TASK_TRANSITIONS,
     AgentCapability,
     AgentId,
     AgentResult,
@@ -47,6 +48,7 @@ __all__ = [
     "TaskStatus",
     "ToolPermission",
     "ToolSpec",
+    "VALID_TASK_TRANSITIONS",
     "VerificationResult",
     "WorkerInfo",
     "WorkerStatus",

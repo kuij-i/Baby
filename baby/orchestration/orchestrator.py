@@ -9,6 +9,7 @@ from typing import Optional
 from baby.agents import agent_registry
 from baby.audit import audit_log
 from baby.core import AgentId, AgentResult, AuditEventType, ExecutionContext, Plan, PlanStep, Task, TaskStatus
+from baby.errors import InvalidStateTransitionError
 from baby.logging import get_logger
 from baby.observability import task_tracker
 from baby.planning.planner import task_planner
@@ -30,7 +31,9 @@ class Orchestrator:
         if user_id and not task.user_id:
             task.user_id = user_id
 
-        task_tracker.register_task(task, status=TaskStatus.IN_PROGRESS)
+        # Register as PENDING first, then transition to IN_PROGRESS following the state machine
+        task_tracker.register_task(task, status=TaskStatus.PENDING)
+        task_tracker.update_status(task.id, TaskStatus.IN_PROGRESS)
 
         logger.info(
             "Starting task execution",
@@ -91,6 +94,13 @@ class Orchestrator:
                 details={"steps_executed": len(plan.steps)},
             )
             return result
+        except InvalidStateTransitionError:
+            # State machine violation — log and re-raise without clobbering state
+            logger.error(
+                "Invalid task state transition during execution",
+                task_id=str(task.id),
+            )
+            raise
         except Exception as exc:
             task_tracker.update_status(
                 task.id,

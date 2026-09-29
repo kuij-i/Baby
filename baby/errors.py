@@ -13,6 +13,16 @@ class ConfigurationError(BabyException):
     pass
 
 
+class InvalidStateTransitionError(BabyException):
+    """Attempted an invalid task state transition.
+
+    Raised when a state transition is not allowed by the task state machine,
+    including any attempt to transition from a terminal state.
+    """
+
+    pass
+
+
 class ValidationError(BabyException):
     """Error in validation."""
 
