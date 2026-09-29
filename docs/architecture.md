@@ -395,6 +395,39 @@ Simple, file-based, no infrastructure, sufficient for MVP. Can migrate to Postgr
 
 Machine-readable logs, better for parsing and analysis, easier to ship to log aggregation systems later.
 
+## Phase 11 Architecture & Language Boundaries
+
+Phase 11 establishes a targeted hybrid architecture with explicit interfaces:
+
+### 1. Python Ownership (Intelligence & Backend Layer)
+Python remains the authoritative language for:
+- Agent reasoning loops, orchestration, and planning
+- LLM provider integration (OpenAI, Anthropic, local endpoints)
+- REST control plane & observability API (FastAPI)
+- Security permission manager, approval workflow, and token authentication
+- Task state machine and lifecycle tracking (TaskTracker)
+- Analysis-only trading research and signal generation
+
+### 2. Persistence Boundary (Durable SQLite)
+Durable state is decoupled from domain logic via explicit interfaces:
+- `DatabaseManager`: Connection lifecycle, WAL journal mode, busy timeouts, and atomic transaction rollback.
+- `MemoryStore`: Abstract interface implemented by both `InMemoryStore` and durable `SQLiteMemoryStore`.
+- `AuditLog`: Immutable audit trail backed by `SQLiteAuditLog` with indexed queries, pagination, and engagement isolation.
+- `SQLiteTaskStore`: Backing store for `TaskTracker` ensuring tasks, plans, approvals, and outcomes survive restarts while the Python domain layer strictly enforces state machine rules and fail-closed crash recovery.
+
+### 3. Future TypeScript Boundary (Presentation & Client Layer)
+- TypeScript is **deferred** — no frontend application code was prematurely introduced.
+- The Python API serves as the formal contract boundary via OpenAPI 3.1.0 schema generation (`baby.api.openapi.export_openapi_schema`).
+- Endpoints are dual-mounted under both unversioned root paths and `/api/v1/...` to establish a clean convention for future breaking changes while maintaining 100% backwards compatibility.
+
+### 4. Future Rust Boundary (Native Runtime Layer)
+- Rust is **deferred** — no production code was migrated because the existing Python implementation meets current performance and security requirements without evidence justifying migration.
+- Established the `CodingFilesystem` abstract interface in `baby.tools.coding.filesystem`. The current authoritative implementation is `LocalCodingFilesystem`. A future native Rust engine can be introduced behind this interface with zero modifications to `CodingAgent` or security policies.
+
+### 5. Analysis-Only Trading Guardrail
+- Trading remains strictly analysis-only.
+- Live trading, broker order execution, exchange credentials, and automated position management are explicitly forbidden and non-existent.
+
 ## Future Considerations
 
 - Multi-user support and authentication

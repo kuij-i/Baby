@@ -136,12 +136,15 @@ class MetricsCollector:
 
     def record_api_request(self, method: str, endpoint: str, status_code: int) -> None:
         # Normalize endpoint to a bounded prefix to prevent label cardinality abuse.
-        # Only the first path segment is used as the label key; path parameters
-        # (UUIDs, arbitrary IDs) are collapsed to avoid unbounded cardinality.
-        known_prefixes = {"/health", "/metrics", "/tasks", "/workers", "/agents", "/audit"}
+        # Strip /api/v1 prefix if present so versioned endpoints share bounded label space.
+        clean_endpoint = endpoint
+        if clean_endpoint.startswith("/api/v1"):
+            clean_endpoint = clean_endpoint[7:] or "/"
+
+        known_prefixes = {"/health", "/ready", "/readiness", "/metrics", "/tasks", "/workers", "/agents", "/audit"}
         endpoint_label = "other"
         for prefix in known_prefixes:
-            if endpoint == prefix or endpoint.startswith(prefix + "/"):
+            if clean_endpoint == prefix or clean_endpoint.startswith(prefix + "/"):
                 endpoint_label = prefix
                 break
         self.increment_counter(

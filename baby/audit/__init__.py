@@ -1,7 +1,7 @@
 """Audit logging system for BABY.
 
 Provides an in-memory audit trail for compliance and debugging. The storage
-implementation is intentionally replaceable so it can later be backed by
+implementation is intentionally replaceable so it can be backed by
 SQLite or another durable store.
 """
 
@@ -12,7 +12,7 @@ from baby.core import AgentId, AuditEvent, AuditEventType, TaskId
 
 
 class AuditLog:
-    """In-memory audit log."""
+    """In-memory audit log for isolated tests and default in-process auditing."""
 
     def __init__(self) -> None:
         self._events: list[AuditEvent] = []
@@ -116,5 +116,10 @@ class AuditLog:
         self._events.clear()
 
 
-# Global audit log instance
+# Global in-memory audit log instance
 audit_log = AuditLog()
+
+__all__ = [
+    "AuditLog",
+    "audit_log",
+]

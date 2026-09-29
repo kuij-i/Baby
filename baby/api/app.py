@@ -4,16 +4,18 @@ Provides read-only operational endpoints for health, metrics, tasks,
 workers, agents, and audit visibility. All endpoints are protected by
 the existing authentication and engagement-scoping model.
 
-Phase 10 additions:
+Phase 10 & 11 additions:
 - FastAPI lifespan handler for deterministic startup/shutdown
-- Startup: validates configuration, recovers stale tasks
-- Shutdown: stops workers cleanly, logs lifecycle events
+- Startup: validates configuration, initializes durable database, recovers stale tasks
+- Shutdown: stops workers cleanly, closes database resources
+- Clean API versioning (/api/v1) alongside backwards-compatible unversioned endpoints
+  for future TypeScript clients
 """
 
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from baby.api.middleware import ReadOnlyMiddleware
 from baby.api.routes import agents, audit, health, metrics, readiness, tasks, workers
@@ -28,13 +30,15 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
     Startup:
         1. Validate critical configuration
-        2. Recover stale in-progress tasks (fail-closed restart recovery)
-        3. Log readiness
+        2. Initialize durable database schema
+        3. Recover stale in-progress tasks (fail-closed restart recovery)
+        4. Log readiness
 
     Shutdown:
         1. Log shutdown signal
-        2. Flush observability state (in-memory; no durable flush needed at this phase)
-        3. Log clean shutdown
+        2. Transition active workers to STOPPED
+        3. Close persistent database connections
+        4. Log clean shutdown
     """
     # ---- STARTUP ----
     logger.info("BABY observability API starting up")
@@ -44,11 +48,20 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     from baby.core import WorkerStatus
     from baby.observability.tasks import task_tracker
     from baby.observability.workers import worker_tracker
+    from baby.persistence.database import db_manager
 
-    # Validate configuration at startup — fail fast on critical misconfigurations
+    # 1. Validate configuration at startup — fail fast on critical misconfigurations
     _validate_startup_configuration(settings)
 
-    # Recover stale tasks: any task left IN_PROGRESS from a previous run
+    # 2. Initialize database schema if SQLite persistence is enabled
+    if getattr(settings, "persistence_backend", "sqlite") == "sqlite":
+        try:
+            db_manager.init_schema()
+        except Exception as exc:
+            logger.error("Failed to initialize database schema", error=str(exc))
+            raise
+
+    # 3. Recover stale tasks: any task left IN_PROGRESS from a previous run
     # is marked FAILED (fail-closed restart recovery)
     recovered = task_tracker.recover_stale_tasks()
     if recovered:
@@ -74,13 +87,19 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             worker_tracker.set_status(worker.worker_id, WorkerStatus.STOPPED)
             logger.info("Worker stopped on shutdown", worker_id=worker.worker_id)
 
+    # Close database connections cleanly
+    try:
+        db_manager.close()
+    except Exception as exc:
+        logger.warning("Error closing database connection during shutdown", error=str(exc))
+
     logger.info("BABY observability API shutdown complete")
 
 
 def _validate_startup_configuration(settings_obj: object) -> None:
     """Validate critical settings at startup. Log warnings for misconfigurations.
 
-    Critical issues (like invalid bounds) raise ConfigurationError.
+    Critical issues (like invalid bounds or missing database configuration) raise ConfigurationError.
     """
     from baby.configuration import Settings, validate_settings
 
@@ -120,7 +139,7 @@ async def unhandled_exception_handler(request: object, exc: Exception):
 # Read-only enforcement middleware (applied first)
 app.add_middleware(ReadOnlyMiddleware)
 
-# Observability routers
+# Observability routers (unversioned for backwards compatibility)
 app.include_router(health.router)
 app.include_router(readiness.router)
 app.include_router(metrics.router)
@@ -128,3 +147,14 @@ app.include_router(tasks.router)
 app.include_router(workers.router)
 app.include_router(agents.router)
 app.include_router(audit.router)
+
+# Versioned API routes (/api/v1) for future TypeScript clients
+v1_router = APIRouter(prefix="/api/v1")
+v1_router.include_router(health.router)
+v1_router.include_router(readiness.router)
+v1_router.include_router(metrics.router)
+v1_router.include_router(tasks.router)
+v1_router.include_router(workers.router)
+v1_router.include_router(agents.router)
+v1_router.include_router(audit.router)
+app.include_router(v1_router)

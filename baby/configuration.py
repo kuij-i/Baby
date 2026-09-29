@@ -22,9 +22,11 @@ class Settings(BaseSettings):
     openai_base_url: Optional[str] = None  # Override for NVIDIA/local endpoints
     anthropic_api_key: Optional[str] = None
 
-    # Database
+    # Persistence & Database
     database_url: str = "sqlite:///./baby.db"
-    memory_storage_type: str = "sqlite"
+    persistence_backend: str = "sqlite"  # "sqlite" or "in_memory"
+    memory_storage_type: str = "sqlite"  # "sqlite" or "in_memory"
+    audit_storage_type: str = "sqlite"  # "sqlite" or "in_memory"
 
     # Audit
     audit_log_enabled: bool = True
@@ -77,10 +79,23 @@ def validate_settings(cfg: "Settings") -> list:
         raise ConfigurationError(f"coding_max_iterations must be >= 1, got {cfg.coding_max_iterations}")
     if cfg.coding_max_tool_calls_per_iteration < 1:
         raise ConfigurationError(
-            f"coding_max_tool_calls_per_iteration must be >= 1, " f"got {cfg.coding_max_tool_calls_per_iteration}"
+            f"coding_max_tool_calls_per_iteration must be >= 1, got {cfg.coding_max_tool_calls_per_iteration}"
         )
     if cfg.coding_max_file_size_bytes < 1:
         raise ConfigurationError(f"coding_max_file_size_bytes must be >= 1, got {cfg.coding_max_file_size_bytes}")
+
+    # Persistence backend validation (fail-closed if durable persistence is misconfigured)
+    if cfg.persistence_backend not in ("sqlite", "in_memory"):
+        raise ConfigurationError(
+            f"Invalid persistence_backend '{cfg.persistence_backend}'. Expected 'sqlite' or 'in_memory'."
+        )
+
+    if cfg.persistence_backend == "sqlite":
+        if not cfg.database_url or not cfg.database_url.strip():
+            raise ConfigurationError(
+                "persistence_backend='sqlite' requires a non-empty database_url. "
+                "Do not fall back silently to in-memory mode in production."
+            )
 
     # Non-critical: auth configuration warnings
     if cfg.api_require_auth and not cfg.api_auth_token and not cfg.api_admin_token:
@@ -92,14 +107,17 @@ def validate_settings(cfg: "Settings") -> list:
     # Non-critical: development mode warning
     if not cfg.api_require_auth:
         warnings.append(
-            "api_require_auth=False (development mode): all callers get admin access; " "DO NOT use in production"
+            "api_require_auth=False (development mode): all callers get admin access; DO NOT use in production"
         )
 
-    # Non-critical: unknown memory storage type
+    # Non-critical: unknown storage type warnings
     if cfg.memory_storage_type not in ("sqlite", "in_memory"):
         warnings.append(
-            f"Unrecognized memory_storage_type '{cfg.memory_storage_type}'; " "expected 'sqlite' or 'in_memory'"
+            f"Unrecognized memory_storage_type '{cfg.memory_storage_type}'; expected 'sqlite' or 'in_memory'"
         )
+
+    if cfg.audit_storage_type not in ("sqlite", "in_memory"):
+        warnings.append(f"Unrecognized audit_storage_type '{cfg.audit_storage_type}'; expected 'sqlite' or 'in_memory'")
 
     return warnings
 
