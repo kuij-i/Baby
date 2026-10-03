@@ -17,14 +17,14 @@ ruff check baby tests                   # lint (CI)
 mypy baby                               # type check (CI)
 black baby tests && isort baby tests    # format (120-char lines; not enforced in CI)
 uvicorn baby.api.app:app --reload       # run the read-only observability API
-python -m baby.api.openapi              # export OpenAPI schema to docs/openapi.json
+python -m baby.api.openapi              # export OpenAPI schema (writes docs/openapi.json)
 ```
 
 CI (`.github/workflows/ci.yml`) runs ruff → mypy → pytest on Python 3.10/3.11/3.12 for pushes/PRs to `main`. Markers `unit`, `integration`, `slow` are registered; unregistered markers fail under `--strict-markers`. Prefer `python -m pytest` so tests run with the interpreter that has the package installed.
 
 ## Architecture
 
-`PHASE_N_SUMMARY.md` files and commit messages record what each development phase added; `docs/architecture.md` and `docs/security.md` hold the design rationale.
+Commit messages (`PHASE N: ...`) record what each development phase added; there is no separate design-doc folder, so the code and this file are the reference.
 
 ### Execution flow
 `orchestration.Orchestrator.execute_task` → `planning.planner.TaskPlanner` (currently produces a single step; `approval_required` when priority ≥ 8) → `planning.selection` picks an enabled agent from `agents.registry` → `Agent.execute(ExecutionContext)` → agent calls tools **only via `tools.executor.ToolExecutor`** → result. Task state is tracked by `observability.tasks.TaskTracker`, and every stage records an `AuditEvent`.

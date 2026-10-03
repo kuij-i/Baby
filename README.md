@@ -60,8 +60,7 @@ baby/
   errors.py              # Exception types
 
 tests/                   # Test suite
-docs/                    # Documentation
-.github/                 # CI workflow and Copilot instructions
+.github/                 # CI workflow
 ```
 
 ## Development
@@ -140,15 +139,6 @@ Baby is designed with security as a core principle:
 - **Audit logging** - all meaningful actions are recorded
 - **Secret management** - API keys and credentials are never committed
 - **Least privilege** - agents receive minimal necessary permissions
-
-For detailed security information, see [docs/security.md](docs/security.md).
-
-## Documentation
-
-- [Architecture](docs/architecture.md) - System design and component overview
-- [Security](docs/security.md) - Security model and best practices
-- [Development](docs/development.md) - Developer guide
-- [Copilot Instructions](.github/copilot-instructions.md) - Repository-level guidance
 
 ## License
 
