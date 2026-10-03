@@ -128,47 +128,27 @@ Create PR on GitHub with clear description of changes.
 
 ```
 baby/
-├── __init__.py
-├── core/
-│   ├── __init__.py
-│   └── contracts.py          # Core domain contracts
-├── orchestrator/             # Orchestration engine (Phase 5)
-├── planning/                 # Task planning (Phase 5)
-├── routing/                  # Agent routing (Phase 5)
-├── agents/                   # Specialist agents (Phase 7+)
-│   ├── __init__.py
-│   └── base.py               # Agent base class
-├── tools/                    # Tool abstractions (Phase 4)
-│   ├── __init__.py
-│   └── base.py               # Tool base class
-├── permissions/              # Permission system (Phase 3)
-│   ├── __init__.py
-│   └── manager.py            # Permission manager
-├── verification/             # Verification layer (Phase 5)
-├── memory/                   # Memory system (Phase 6)
-├── audit/                    # Audit logging (Phase 1)
-│   ├── __init__.py
-│   └── log.py                # Audit log implementation
-├── logging.py                # Structured logging
-├── errors.py                 # Exception types
-└── configuration.py          # Configuration management (Phase 1)
+  core/                  # Pydantic domain contracts (contracts.py)
+  orchestration/         # Orchestrator: plan → select agent → execute → audit
+  planning/              # TaskPlanner and agent selection logic
+  agents/                # Agent base class, registry, specialist agents
+    coding/              # CodingAgent (repository-bounded)
+  tools/                 # Tool base, registry, permission-enforcing executor
+    coding/              # list_files / read_file / write_file + CodingFilesystem
+  permissions/           # Permission manager
+  providers/             # Model provider abstraction (OpenAI-compatible)
+  memory/                # MemoryStore interface + in-memory implementation
+  audit/                 # Audit log
+  persistence/           # SQLite database manager and durable stores
+  observability/         # Task/worker tracking, metrics, health, redaction
+  api/                   # Read-only FastAPI observability API (+ /api/v1)
+  configuration.py       # Settings (pydantic-settings, .env)
+  logging.py             # Structured logging
+  errors.py              # Exception types
 
-tests/
-├── __init__.py
-├── test_contracts.py         # Contract tests
-├── test_permissions.py       # Permission tests (Phase 3)
-├── test_agents.py            # Agent tests (Phase 2+)
-├── test_tools.py             # Tool tests (Phase 4)
-├── test_orchestrator.py      # Orchestrator tests (Phase 5)
-└── fixtures/                 # Test fixtures
-
-docs/
-├── architecture.md           # Architecture overview
-├── security.md               # Security model
-└── development.md            # This file
-
-.github/
-└── copilot-instructions.md   # Copilot guidance
+tests/                   # Test suite
+docs/                    # Documentation
+.github/                 # CI workflow and Copilot instructions
 ```
 
 ## Code Style
@@ -385,11 +365,13 @@ pytest -vv -s tests/test_contracts.py::TestTaskId::test_task_id_creation
 
 ## CI/CD
 
-Future: GitHub Actions workflows will:
-- Run tests on PR
-- Check code quality
-- Verify coverage
-- Run security checks
+`.github/workflows/ci.yml` runs on pushes and pull requests to `main`, on Python 3.10, 3.11, and 3.12:
+
+```bash
+ruff check baby tests
+mypy baby
+pytest --cov=baby tests/ -v
+```
 
 ## Performance
 

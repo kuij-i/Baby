@@ -16,26 +16,32 @@ USER TASK → ORCHESTRATOR → PLANNER → ROUTER → SPECIALIST AGENT → TOOLS
 
 ```
 baby/
-  core/                    # Core domain contracts (Phase 1) ✓
-  orchestrator/            # Orchestration engine (Phase 5)
-  planning/                # Task planning (Phase 5)
-  routing/                 # Agent routing (Phase 5)
-  permissions/             # Permission system (Phase 3)
-  agents/                  # Specialist agents (Phase 7+)
-  tools/                   # Tool abstractions (Phase 4)
-  verification/            # Verification layer (Phase 5)
-  memory/                  # Memory system (Phase 6)
-  audit/                   # Audit logging (Phase 1) ✓
-  logging.py               # Structured logging (Phase 1) ✓
-  errors.py                # Exceptions (Phase 1) ✓
+  core/                  # Pydantic domain contracts (contracts.py)
+  orchestration/         # Orchestrator: plan → select agent → execute → audit
+  planning/              # TaskPlanner and agent selection logic
+  agents/                # Agent base class, registry, specialist agents
+    coding/              # CodingAgent (repository-bounded)
+  tools/                 # Tool base, registry, permission-enforcing executor
+    coding/              # list_files / read_file / write_file + CodingFilesystem
+  permissions/           # Permission manager
+  providers/             # Model provider abstraction (OpenAI-compatible)
+  memory/                # MemoryStore interface + in-memory implementation
+  audit/                 # Audit log
+  persistence/           # SQLite database manager and durable stores
+  observability/         # Task/worker tracking, metrics, health, redaction
+  api/                   # Read-only FastAPI observability API (+ /api/v1)
+  configuration.py       # Settings (pydantic-settings, .env)
+  logging.py             # Structured logging
+  errors.py              # Exception types
 
-tests/                     # Test suite
-docs/                      # Documentation
+tests/                   # Test suite
+docs/                    # Documentation
+.github/                 # CI workflow and Copilot instructions
 ```
 
 ## Implementation Phase
 
-**Current:** PHASE 8 (Iterative Coding Agent Orchestration) - COMPLETE
+**Current:** PHASE 11 (Architectural Boundaries & Durable Persistence) - COMPLETE
 - [x] Foundation (Phase 1)
 - [x] Agent framework & permissions (Phase 2 & 3)
 - [x] Tool framework with fail-closed approval enforcement (Phase 3 & 6)
@@ -45,11 +51,11 @@ docs/                      # Documentation
 - [x] GitHub Actions CI workflow (Phase 6)
 - [x] Repository-bounded coding tools & CodingAgent (Phase 7)
 - [x] Bounded iterative CodingAgent orchestration loop (Phase 8)
+- [x] Read-only observability API, audit visibility, engagement-scoped auth (Phase 9)
+- [x] Task state machine, restart recovery, lifecycle hardening (Phase 10)
+- [x] CodingFilesystem boundary, /api/v1 versioning, OpenAPI export, SQLite persistence (Phase 11)
 
-**Next:** PHASE 9 (First Complete Vertical Slice)
-- End-to-end task execution with planner, CodingAgent, and bounded tools
-- Verification layer integration
-- Multi-step code modification and validation
+**Next:** Verification layer, LLM-driven multi-step planning, UI, additional specialist teams
 
 ## Core Contracts
 
@@ -199,19 +205,19 @@ pytest tests/test_contracts.py::TestTaskId::test_task_id_creation
 
 ### Add an Agent Type
 
-1. Create `baby/agents/my_agent.py`
-2. Inherit from base agent class (Phase 2+)
-3. Define capabilities in AgentSpec
+1. Create a package under `baby/agents/` (see `baby/agents/coding/`)
+2. Inherit from `baby.agents.base.Agent`
+3. Define capabilities and permissions in its `AgentSpec`
 4. Add tests to `tests/test_agents.py`
-5. Register in agent registry (Phase 2+)
+5. Register in `baby.agents.registry.agent_registry`
 
 ### Add a Tool
 
-1. Create tool specification (Phase 4+)
-2. Define permissions required
-3. Implement tool class
-4. Register in tool registry
-5. Add tests for security constraints
+1. Subclass `baby.tools.base.Tool` with a `ToolSpec`
+2. Declare `permissions_required`
+3. Execute only through `baby.tools.executor.tool_executor`
+4. Register in `baby.tools.registry.tool_registry`
+5. Add tests for security constraints (denial and approval paths)
 
 ## Useful Files
 
@@ -241,30 +247,6 @@ git commit -m "feat: Clear description of change"
 # Push and create PR
 git push origin feature/description
 ```
-
-## Next Steps After Phase 1
-
-1. **Phase 2:** Build agent framework
-   - Agent registry
-   - Base agent class
-   - Capability system
-
-2. **Phase 3:** Build permission system
-   - Permission manager
-   - Authorization checks
-   - Approval workflow
-
-3. **Phase 4:** Build tool framework
-   - Tool registry
-   - Tool abstractions
-   - Execution interface
-
-4. **Phase 5:** Build orchestrator
-   - Task intake
-   - Planning
-   - Routing
-   - Execution
-   - Verification
 
 ## Questions?
 
