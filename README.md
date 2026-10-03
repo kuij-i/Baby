@@ -41,22 +41,21 @@ FINAL RESPONSE
 
 ```
 baby/
-  core/                  # Core domain contracts and types
-  orchestrator/          # Main orchestration engine
-  planning/              # Task planning subsystem
-  routing/               # Agent routing logic
-  permissions/           # Permission and authorization system
-  verification/          # Result verification layer
-  memory/                # Memory management
-  audit/                 # Audit logging
-  agents/                # Specialist agent implementations
-    coding/
-    trading/
-    copywriting/
-    testing/
-    cybersecurity/
-  tools/                 # Tool implementations and abstractions
-  configuration.py       # Configuration management
+  core/                  # Pydantic domain contracts (contracts.py)
+  orchestration/         # Orchestrator: plan → select agent → execute → audit
+  planning/              # TaskPlanner and agent selection logic
+  agents/                # Agent base class, registry, specialist agents
+    coding/              # CodingAgent (repository-bounded)
+  tools/                 # Tool base, registry, permission-enforcing executor
+    coding/              # list_files / read_file / write_file + CodingFilesystem
+  permissions/           # Permission manager
+  providers/             # Model provider abstraction (OpenAI-compatible)
+  memory/                # MemoryStore interface + in-memory implementation
+  audit/                 # Audit log
+  persistence/           # SQLite database manager and durable stores
+  observability/         # Task/worker tracking, metrics, health, redaction
+  api/                   # Read-only FastAPI observability API (+ /api/v1)
+  configuration.py       # Settings (pydantic-settings, .env)
   logging.py             # Structured logging
   errors.py              # Exception types
 
@@ -89,8 +88,14 @@ pytest --cov=baby tests/
 # Run specific test file
 pytest tests/test_contracts.py
 
-# Run unit tests only
-pytest -m unit
+# Run a single test
+pytest tests/test_contracts.py::TestTaskId::test_task_id_creation
+```
+
+### Running the observability API
+
+```bash
+uvicorn baby.api.app:app --reload
 ```
 
 ### Code Quality
@@ -112,13 +117,7 @@ isort baby tests
 ## Implementation Status
 
 - [x] PHASE 0: Repository inspection
-- [x] PHASE 1: Foundation
-  - [x] Project structure
-  - [x] Configuration
-  - [x] Typed contracts
-  - [x] Logging infrastructure
-  - [x] Error handling
-  - [x] Testing foundation
+- [x] PHASE 1: Foundation (structure, configuration, contracts, logging, errors, tests)
 - [x] PHASE 2: Agent framework
 - [x] PHASE 3: Permission system & Tool framework
 - [x] PHASE 4: Planner & Orchestration
@@ -126,9 +125,10 @@ isort baby tests
 - [x] PHASE 6: Model Provider Abstraction & Approval Enforcement
 - [x] PHASE 7: Coding agent & repository-bounded tools
 - [x] PHASE 8: Iterative coding agent orchestration
-- [ ] PHASE 9: First complete vertical slice
-- [ ] PHASE 10: UI
-- [ ] PHASE 11: Additional specialist teams
+- [x] PHASE 9: Operational observability, audit visibility, and API authorization
+- [x] PHASE 10: Production reliability and lifecycle hardening
+- [x] PHASE 11: Architectural boundaries and durable SQLite persistence
+- [ ] Next: Verification layer, multi-step planning, UI, additional specialist teams
 
 ## Security
 

@@ -13,7 +13,8 @@ from fastapi import FastAPI
 
 def get_openapi_schema(application: FastAPI) -> Dict[str, Any]:
     """Generate and return the complete OpenAPI 3.1.0 schema dictionary from the FastAPI app."""
-    return application.openapi()
+    schema: Dict[str, Any] = application.openapi()
+    return schema
 
 
 def export_openapi_schema(
