@@ -10,6 +10,14 @@ Phase 10 & 11 additions:
 - Shutdown: stops workers cleanly, closes database resources
 - Clean API versioning (/api/v1) alongside backwards-compatible unversioned endpoints
   for future TypeScript clients
+
+Phase 12 additions:
+- Durable audit backend attached at startup (audit_storage_type='sqlite') so events from
+  isolated worker processes are visible; detached again at shutdown
+- Lease-aware recovery: tasks owned by live workers (valid lease) survive an API restart;
+  expired/orphaned work fails closed
+- Optional worker supervision (worker_enabled=True): worker *processes* are started and
+  stopped with the API. The API itself never executes tasks.
 """
 
 from contextlib import asynccontextmanager
@@ -61,8 +69,29 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             logger.error("Failed to initialize database schema", error=str(exc))
             raise
 
-    # 3. Recover stale tasks: any task left IN_PROGRESS from a previous run
-    # is marked FAILED (fail-closed restart recovery)
+    previous_audit_backend = None
+    audit_backend_attached = False
+    if settings.persistence_backend == "sqlite" and settings.audit_storage_type == "sqlite":
+        from baby.audit import audit_log
+        from baby.persistence.sqlite_audit import SQLiteAuditLog
+
+        previous_audit_backend = audit_log.use_backend(SQLiteAuditLog(db_manager))
+        audit_backend_attached = True
+
+    # 3. Recover stale work (fail closed, never replayed):
+    #    a) leases whose worker is stale/gone or whose lease expired → task FAILED
+    #    b) IN_PROGRESS tasks with no lease (no live owner)          → task FAILED
+    #    Tasks leased by live workers are left alone (API restart while workers run).
+    if task_tracker.store is not None:
+        from baby.workers.recovery import WorkerRecovery
+
+        lease_report = WorkerRecovery(task_store=task_tracker.store).recover()
+        if lease_report.changed:
+            logger.warning(
+                "Recovered lost worker leases at startup",
+                stale_workers=len(lease_report.stale_workers),
+                failed_tasks=len(lease_report.failed_tasks),
+            )
     recovered = task_tracker.recover_stale_tasks()
     if recovered:
         logger.warning(
@@ -73,6 +102,15 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     else:
         logger.info("No stale tasks to recover at startup")
 
+    supervisor = None
+    if settings.worker_enabled:
+        from baby.workers.supervisor import WorkerSupervisor
+
+        supervisor = WorkerSupervisor()
+        supervisor.start()
+        supervisor.start_monitor_thread()
+        application.state.worker_supervisor = supervisor
+
     logger.info("BABY observability API ready")
 
     yield  # Application runs here
@@ -80,12 +118,21 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     # ---- SHUTDOWN ----
     logger.info("BABY observability API shutting down")
 
-    # Mark all active workers as STOPPED on clean shutdown
+    if supervisor is not None:
+        supervisor.stop()
+
+    # Mark in-process tracked workers as STOPPED on clean shutdown. Durable worker
+    # processes are independent of the API and keep running (and keep their leases).
     active_workers = worker_tracker.list_workers()
     for worker in active_workers:
         if worker.status not in (WorkerStatus.STOPPED, WorkerStatus.ERROR):
             worker_tracker.set_status(worker.worker_id, WorkerStatus.STOPPED)
             logger.info("Worker stopped on shutdown", worker_id=worker.worker_id)
+
+    if audit_backend_attached:
+        from baby.audit import audit_log
+
+        audit_log.use_backend(previous_audit_backend)
 
     # Close database connections cleanly
     try:
@@ -113,8 +160,9 @@ def _validate_startup_configuration(settings_obj: object) -> None:
 app = FastAPI(
     title="BABY Observability API",
     description=(
-        "Read-only operational observability and audit visibility API for the BABY platform. "
-        "All endpoints enforce authentication and engagement scoping."
+        "Operational observability and audit visibility API for the BABY platform. Read-only except for "
+        "task control (submit, cancel, admin approval decisions), which only writes durable task state; "
+        "tasks execute in isolated worker processes. All endpoints enforce authentication and engagement scoping."
     ),
     version="0.1.0",
     docs_url="/docs",

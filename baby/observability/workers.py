@@ -68,11 +68,11 @@ class WorkerTracker:
                 worker.last_heartbeat_at = datetime.utcnow()
                 if success:
                     worker.tasks_completed += 1
-                    metrics_collector.increment_counter("worker_tasks_completed_total", labels={"worker_id": worker_id})
+                    metrics_collector.increment_counter("worker_tasks_completed_total")
                 else:
                     worker.tasks_failed += 1
                     worker.last_error = error
-                    metrics_collector.increment_counter("worker_tasks_failed_total", labels={"worker_id": worker_id})
+                    metrics_collector.increment_counter("worker_tasks_failed_total")
                 self._update_worker_metrics()
             return worker
 

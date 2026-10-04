@@ -81,3 +81,18 @@ class TaskNotFoundError(BabyException):
     """Task not found."""
 
     pass
+
+
+class TaskClaimError(BabyException):
+    """A durable task claim could not be established or is no longer held."""
+
+    pass
+
+
+class LeaseLostError(TaskClaimError):
+    """A worker no longer holds the lease (or fence) for the task it is executing.
+
+    The worker must stop work and must not write any result for the task.
+    """
+
+    pass

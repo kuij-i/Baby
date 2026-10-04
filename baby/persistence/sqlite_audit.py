@@ -42,7 +42,7 @@ class SQLiteAuditLog:
 
         task_id_str = str(task_id) if task_id else None
         agent_id_str = str(agent_id) if agent_id else None
-        details_json = json.dumps(event.details)
+        details_json = json.dumps(event.details, default=str)
         timestamp_str = event.timestamp.isoformat()
 
         with self._db.transaction() as conn:

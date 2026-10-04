@@ -8,6 +8,7 @@ from baby.core import AgentId, AuditEventType, PermissionLevel, TaskId
 from baby.errors import ApprovalRequiredError, ExecutionError, PermissionDeniedError
 from baby.logging import get_logger
 from baby.permissions import permission_manager
+from baby.permissions.approvals import approval_service
 from baby.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
@@ -57,6 +58,31 @@ class ToolExecutor:
                 try:
                     level = permission_manager.check_permission(agent_id_str, required_perm)
                     if level == PermissionLevel.APPROVAL_REQUIRED:
+                        # Only an admin-granted, unconsumed approval bound to this exact task,
+                        # engagement and operation (tool + agent + permission + arguments)
+                        # lets execution proceed; it is consumed atomically (single use).
+                        granted = approval_service.authorize_or_request(
+                            task_id=task_id,
+                            agent_id=agent_id,
+                            engagement_id=user_id,
+                            operation=f"tool:{tool.name}",
+                            permission=required_perm.category.value,
+                            arguments=kwargs,
+                            reason=f"Tool '{tool.name}' requires approval for '{required_perm.category.value}'",
+                        )
+                        if granted:
+                            audit_log.record(
+                                AuditEventType.APPROVAL_GRANTED,
+                                task_id=task_id,
+                                agent_id=agent_id,
+                                user_id=user_id,
+                                details={
+                                    "tool": tool.name,
+                                    "permission": required_perm.category.value,
+                                    "result": "approval_consumed",
+                                },
+                            )
+                            continue
                         logger.warning(
                             "Approval required — tool execution blocked",
                             tool=tool.name,

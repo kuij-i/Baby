@@ -3,7 +3,7 @@
 import json
 import sqlite3
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 from uuid import UUID
 
 from baby.core import (
@@ -30,8 +30,47 @@ class SQLiteTaskStore:
         self._db = manager or db_manager
         self._db.init_schema()
 
+    @property
+    def db(self) -> DatabaseManager:
+        """Underlying database manager (shared with the durable worker queue)."""
+        return self._db
+
     def save_task(self, record: TaskRecord) -> None:
         """Persist or update a task record in SQLite."""
+        with self._db.transaction() as conn:
+            self.write_record(conn, record)
+
+    def update(self, task_id: TaskId, mutate: Callable[[TaskRecord], None]) -> Optional[TaskRecord]:
+        """Atomically read, mutate and write one task record (cross-process safe).
+
+        ``mutate`` runs inside a ``BEGIN IMMEDIATE`` transaction against the freshly
+        read row, so state-machine checks performed inside it can never act on a stale
+        copy written by another process. If ``mutate`` raises, nothing is written.
+        """
+        with self._db.immediate_transaction() as conn:
+            record = self.read_record(conn, task_id)
+            if record is None:
+                return None
+            mutate(record)
+            self.write_record(conn, record)
+            return record
+
+    @staticmethod
+    def has_lease(conn: sqlite3.Connection, task_id: TaskId) -> bool:
+        """Return True when a worker lease row exists for the task."""
+        row = conn.execute("SELECT 1 FROM task_leases WHERE task_id = ?", (str(task_id),)).fetchone()
+        return row is not None
+
+    def read_record(self, conn: sqlite3.Connection, task_id: TaskId) -> Optional[TaskRecord]:
+        """Read a task record using an existing connection/transaction."""
+        row = conn.execute("SELECT * FROM task_records WHERE task_id = ?", (str(task_id),)).fetchone()
+        return self._row_to_record(row) if row is not None else None
+
+    def write_record(self, conn: sqlite3.Connection, record: TaskRecord) -> None:
+        """Upsert a task record using an existing connection/transaction.
+
+        ``claim_count`` is owned by the worker queue and is never overwritten here.
+        """
         task_id_str = str(record.task_id)
         created_at_str = record.created_at.isoformat()
         updated_at_str = record.updated_at.isoformat()
@@ -43,52 +82,53 @@ class SQLiteTaskStore:
         approvals_json = json.dumps([a.model_dump(mode="json") for a in record.approvals])
         verifications_json = json.dumps([v.model_dump(mode="json") for v in record.verifications])
 
-        with self._db.transaction() as conn:
-            conn.execute(
-                """
-                INSERT INTO task_records (
-                    task_id, title, description, status, created_at, updated_at, completed_at,
-                    user_id, priority, assigned_agent_id, assigned_worker_id, plan, result,
-                    error, approvals, verifications, retry_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(task_id) DO UPDATE SET
-                    title=excluded.title,
-                    description=excluded.description,
-                    status=excluded.status,
-                    created_at=excluded.created_at,
-                    updated_at=excluded.updated_at,
-                    completed_at=excluded.completed_at,
-                    user_id=excluded.user_id,
-                    priority=excluded.priority,
-                    assigned_agent_id=excluded.assigned_agent_id,
-                    assigned_worker_id=excluded.assigned_worker_id,
-                    plan=excluded.plan,
-                    result=excluded.result,
-                    error=excluded.error,
-                    approvals=excluded.approvals,
-                    verifications=excluded.verifications,
-                    retry_count=excluded.retry_count;
-                """,
-                (
-                    task_id_str,
-                    record.title,
-                    record.description,
-                    record.status.value,
-                    created_at_str,
-                    updated_at_str,
-                    completed_at_str,
-                    record.user_id,
-                    record.priority,
-                    agent_id_str,
-                    record.assigned_worker_id,
-                    plan_json,
-                    result_json,
-                    record.error,
-                    approvals_json,
-                    verifications_json,
-                    getattr(record, "retry_count", 0),
-                ),
-            )
+        conn.execute(
+            """
+            INSERT INTO task_records (
+                task_id, title, description, status, created_at, updated_at, completed_at,
+                user_id, priority, assigned_agent_id, assigned_worker_id, plan, result,
+                error, approvals, verifications, retry_count, cancel_requested
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_id) DO UPDATE SET
+                title=excluded.title,
+                description=excluded.description,
+                status=excluded.status,
+                created_at=excluded.created_at,
+                updated_at=excluded.updated_at,
+                completed_at=excluded.completed_at,
+                user_id=excluded.user_id,
+                priority=excluded.priority,
+                assigned_agent_id=excluded.assigned_agent_id,
+                assigned_worker_id=excluded.assigned_worker_id,
+                plan=excluded.plan,
+                result=excluded.result,
+                error=excluded.error,
+                approvals=excluded.approvals,
+                verifications=excluded.verifications,
+                retry_count=excluded.retry_count,
+                cancel_requested=excluded.cancel_requested;
+            """,
+            (
+                task_id_str,
+                record.title,
+                record.description,
+                record.status.value,
+                created_at_str,
+                updated_at_str,
+                completed_at_str,
+                record.user_id,
+                record.priority,
+                agent_id_str,
+                record.assigned_worker_id,
+                plan_json,
+                result_json,
+                record.error,
+                approvals_json,
+                verifications_json,
+                getattr(record, "retry_count", 0),
+                1 if record.cancel_requested else 0,
+            ),
+        )
 
     def get_task(self, task_id: TaskId) -> Optional[TaskRecord]:
         """Retrieve task record by TaskId."""
@@ -198,4 +238,5 @@ class SQLiteTaskStore:
             error=row["error"],
             approvals=approvals_list,
             verifications=verifications_list,
+            cancel_requested=bool(row["cancel_requested"]) if "cancel_requested" in row.keys() else False,
         )

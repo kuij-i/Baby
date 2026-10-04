@@ -171,7 +171,14 @@ class VerificationResult(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    """Request for approval of a high-risk action."""
+    """Request for approval of a high-risk action.
+
+    An approval is bound to exactly one task, engagement, and operation. The
+    ``operation_digest`` is a SHA-256 over the operation name, agent, permission
+    and arguments, so an approval granted for one write can never authorize a
+    different write. Approvals are single-use: ``consumed_at`` is set when the
+    approved operation is executed.
+    """
 
     request_id: UUID = Field(default_factory=uuid4)
     task_id: TaskId
@@ -183,6 +190,12 @@ class ApprovalRequest(BaseModel):
     requires_approval: bool = True
     approved: Optional[bool] = None
     approval_timestamp: Optional[datetime] = None
+    engagement_id: Optional[str] = None
+    permission: Optional[str] = None
+    operation_digest: Optional[str] = None
+    operation_summary: Dict[str, Any] = Field(default_factory=dict)
+    decided_by: Optional[str] = None
+    consumed_at: Optional[datetime] = None
 
 
 class Artifact(BaseModel):
@@ -226,6 +239,15 @@ class AuditEventType(str, Enum):
     VERIFICATION_COMPLETED = "verification_completed"
     TASK_COMPLETED = "task_completed"
     TASK_FAILED = "task_failed"
+    TASK_CANCELLED = "task_cancelled"
+    TASK_CLAIMED = "task_claimed"
+    TASK_LEASE_RENEWED = "task_lease_renewed"
+    TASK_LEASE_LOST = "task_lease_lost"
+    TASK_RECOVERED = "task_recovered"
+    WORKER_STARTED = "worker_started"
+    WORKER_STOPPED = "worker_stopped"
+    WORKER_HEARTBEAT_FAILED = "worker_heartbeat_failed"
+    WORKER_STALE = "worker_stale"
     ERROR = "error"
 
 
@@ -280,14 +302,52 @@ VALID_TASK_TRANSITIONS: dict[str, set[str]] = {
     TaskStatus.CANCELLED: set(),  # terminal
 }
 
+TERMINAL_TASK_STATES: frozenset = frozenset({TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED})
+
+
+def ensure_valid_transition(task_id: Any, current: "TaskStatus", target: "TaskStatus") -> None:
+    """Enforce the single authoritative task state machine.
+
+    Every component that changes task status (in-process tracker, durable worker
+    queue, approval service) calls this function so there is exactly one set of
+    transition rules.
+
+    Raises:
+        InvalidStateTransitionError: If ``current → target`` is not permitted.
+    """
+    from baby.errors import InvalidStateTransitionError
+
+    allowed = VALID_TASK_TRANSITIONS.get(current, set())
+    if target in allowed:
+        return
+    if current in TERMINAL_TASK_STATES:
+        raise InvalidStateTransitionError(
+            f"Task {task_id} is in terminal state '{current}' and cannot transition to '{target}'"
+        )
+    raise InvalidStateTransitionError(
+        f"Invalid task state transition: '{current}' → '{target}'. "
+        f"Allowed transitions from '{current}': {sorted(str(s) for s in allowed) or 'none (terminal)'}"
+    )
+
 
 class WorkerStatus(str, Enum):
-    """Operational status of a worker."""
+    """Operational status of a worker.
 
+    Durable worker processes move through:
+        STARTING → IDLE ⇄ BUSY → STOPPING → STOPPED
+    and may be marked by recovery as:
+        STALE  — heartbeat older than ``worker_stale_timeout_seconds``
+        ERROR  — process exited abnormally or failed fatally
+    IDLE/BUSY/STARTING/STOPPING with a fresh heartbeat count as alive.
+    """
+
+    STARTING = "starting"
     IDLE = "idle"
     BUSY = "busy"
     PAUSED = "paused"
+    STOPPING = "stopping"
     STOPPED = "stopped"
+    STALE = "stale"
     ERROR = "error"
 
 
@@ -310,6 +370,23 @@ class TaskRecord(BaseModel):
     error: Optional[str] = None
     approvals: List[ApprovalRequest] = Field(default_factory=list)
     verifications: List[VerificationResult] = Field(default_factory=list)
+    cancel_requested: bool = False
+
+
+class TaskLease(BaseModel):
+    """Durable, exclusive claim of a task by one worker.
+
+    ``fence`` increases on every claim of the task. Every lease renewal and every
+    final status write must present the worker's fence; a worker whose lease was
+    revoked can therefore never write a result.
+    """
+
+    task_id: TaskId
+    worker_id: str = Field(..., min_length=1, max_length=128)
+    fence: int = Field(..., gt=0)
+    claimed_at: datetime
+    renewed_at: datetime
+    lease_expires_at: datetime
 
 
 class WorkerInfo(BaseModel):
@@ -324,3 +401,4 @@ class WorkerInfo(BaseModel):
     last_heartbeat_at: datetime = Field(default_factory=datetime.utcnow)
     last_error: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    stopped_at: Optional[datetime] = None

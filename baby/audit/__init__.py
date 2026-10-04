@@ -1,14 +1,54 @@
 """Audit logging system for BABY.
 
 Provides an in-memory audit trail for compliance and debugging. The storage
-implementation is intentionally replaceable so it can be backed by
-SQLite or another durable store.
+implementation is intentionally replaceable: ``audit_log.use_backend(SQLiteAuditLog())``
+routes every record and query of the process-wide ``audit_log`` to durable storage.
+The API lifespan and every worker process attach the SQLite backend when
+``audit_storage_type='sqlite'``, so events recorded by isolated worker processes are
+visible through the API.
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Protocol
 
 from baby.core import AgentId, AuditEvent, AuditEventType, TaskId
+
+
+class AuditBackend(Protocol):
+    """Storage interface shared by ``AuditLog`` and ``SQLiteAuditLog``."""
+
+    def record(
+        self,
+        event_type: AuditEventType,
+        task_id: Optional[TaskId] = None,
+        agent_id: Optional[AgentId] = None,
+        user_id: Optional[str] = None,
+        details: Optional[dict[str, Any]] = None,
+    ) -> AuditEvent: ...
+
+    def get_events(
+        self,
+        task_id: Optional[TaskId] = None,
+        agent_id: Optional[AgentId] = None,
+        event_type: Optional[AuditEventType] = None,
+        user_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> list[AuditEvent]: ...
+
+    def count_events(
+        self,
+        task_id: Optional[TaskId] = None,
+        agent_id: Optional[AgentId] = None,
+        event_type: Optional[AuditEventType] = None,
+        user_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+    ) -> int: ...
+
+    def clear(self) -> None: ...
 
 
 class AuditLog:
@@ -16,6 +56,18 @@ class AuditLog:
 
     def __init__(self) -> None:
         self._events: list[AuditEvent] = []
+        self._backend: Optional[AuditBackend] = None
+
+    @property
+    def backend(self) -> Optional[AuditBackend]:
+        """Durable backend currently receiving events, or None for in-memory storage."""
+        return self._backend
+
+    def use_backend(self, backend: Optional[AuditBackend]) -> Optional[AuditBackend]:
+        """Route records and queries to ``backend`` (None restores in-memory). Returns the previous backend."""
+        previous = self._backend
+        self._backend = backend
+        return previous
 
     def record(
         self,
@@ -26,6 +78,10 @@ class AuditLog:
         details: Optional[dict[str, Any]] = None,
     ) -> AuditEvent:
         """Record an audit event without storing secrets in event details."""
+        if self._backend is not None:
+            return self._backend.record(
+                event_type, task_id=task_id, agent_id=agent_id, user_id=user_id, details=details
+            )
         event = AuditEvent(
             event_type=event_type,
             task_id=task_id,
@@ -72,6 +128,17 @@ class AuditLog:
         offset: int = 0,
     ) -> list[AuditEvent]:
         """Retrieve events filtered by task, agent, event type, user/engagement, and/or time range with pagination."""
+        if self._backend is not None:
+            return self._backend.get_events(
+                task_id=task_id,
+                agent_id=agent_id,
+                event_type=event_type,
+                user_id=user_id,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit,
+                offset=offset,
+            )
         matched = self._filter_events(
             task_id=task_id,
             agent_id=agent_id,
@@ -96,6 +163,15 @@ class AuditLog:
         end_time: Optional[datetime] = None,
     ) -> int:
         """Count events matching the specified filters."""
+        if self._backend is not None:
+            return self._backend.count_events(
+                task_id=task_id,
+                agent_id=agent_id,
+                event_type=event_type,
+                user_id=user_id,
+                start_time=start_time,
+                end_time=end_time,
+            )
         return len(
             self._filter_events(
                 task_id=task_id,
@@ -112,14 +188,17 @@ class AuditLog:
         return self.get_events(task_id=task_id)
 
     def clear(self) -> None:
-        """Clear all audit events; intended for isolated tests."""
+        """Clear all audit events (and the attached backend's); intended for isolated tests."""
         self._events.clear()
+        if self._backend is not None:
+            self._backend.clear()
 
 
 # Global in-memory audit log instance
 audit_log = AuditLog()
 
 __all__ = [
+    "AuditBackend",
     "AuditLog",
     "audit_log",
 ]

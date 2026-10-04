@@ -116,6 +116,64 @@ class Orchestrator:
             )
             raise
 
+    async def execute_claimed_task(self, task: Task) -> Optional[AgentResult]:
+        """Plan and execute a task that a durable worker has already claimed.
+
+        Used by worker processes (``baby.workers``). Unlike ``execute_task`` this method
+        performs no task status transitions: the worker owns them and writes them only
+        while it still holds the task's lease (fenced writes), so a worker that lost its
+        claim can never record a result.
+
+        Plan steps marked ``approval_required`` are executed only with an admin-granted,
+        single-use approval bound to this task, engagement and step. Without one, an
+        approval request is recorded and a failed result is returned; the worker then
+        parks the task in AWAITING_APPROVAL.
+        """
+        from baby.permissions.approvals import approval_service
+
+        user_id = task.user_id
+        plan = await task_planner.plan(task)
+        task_tracker.set_plan(task.id, plan)
+        audit_log.record(
+            AuditEventType.PLAN_CREATED,
+            task_id=task.id,
+            user_id=user_id,
+            details={"step_count": len(plan.steps), "reasoning": plan.reasoning},
+        )
+
+        result: Optional[AgentResult] = None
+        for step in plan.steps:
+            if step.approval_required:
+                granted = approval_service.authorize_or_request(
+                    task_id=task.id,
+                    agent_id=AgentId(id="orchestrator"),
+                    engagement_id=user_id,
+                    operation=f"plan_step:{step.step_id}",
+                    permission="plan_step_approval",
+                    arguments={"description": step.description, "priority": task.priority},
+                    reason=f"Plan step {step.step_id} requires approval (task priority {task.priority})",
+                )
+                audit_log.record(
+                    AuditEventType.APPROVAL_GRANTED if granted else AuditEventType.APPROVAL_REQUESTED,
+                    task_id=task.id,
+                    user_id=user_id,
+                    details={
+                        "step_id": step.step_id,
+                        "result": "approval_consumed" if granted else "approval_required",
+                    },
+                )
+                if not granted:
+                    return AgentResult(
+                        step_id=step.step_id,
+                        agent_id=AgentId(id="orchestrator"),
+                        success=False,
+                        error=f"Approval required for plan step {step.step_id}",
+                    )
+            result = await self._execute_step(step, task, plan, user_id)
+            if not result.success:
+                return result
+        return result
+
     async def _execute_step(
         self,
         step: PlanStep,

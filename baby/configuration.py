@@ -57,6 +57,18 @@ class Settings(BaseSettings):
     # Default empty string → operator is scoped to the single "default" engagement.
     operator_engagements: str = ""
 
+    # Durable workers (separate OS processes; see baby/workers)
+    # worker_enabled=True makes the API lifespan supervise worker_count worker processes.
+    # Workers can always be run standalone with `python -m baby.workers run`.
+    worker_enabled: bool = False
+    worker_count: int = 1  # 1..32
+    worker_poll_interval_seconds: float = 1.0  # 0.01..60, idle wait between claim attempts
+    worker_heartbeat_interval_seconds: float = 5.0  # 0.01..300, heartbeat + lease renewal cadence
+    worker_stale_timeout_seconds: float = 30.0  # >= 2 x heartbeat; heartbeat older than this → STALE
+    task_lease_duration_seconds: float = 60.0  # >= 2 x heartbeat; un-renewed lease expires after this
+    worker_shutdown_grace_seconds: float = 10.0  # 0..600, wait for workers to stop before terminating
+    worker_max_task_seconds: float = 3600.0  # 1..86400, bounded execution per claimed task
+
     class Config:
         env_file = ".env"
         case_sensitive = False
@@ -83,6 +95,8 @@ def validate_settings(cfg: "Settings") -> list:
         )
     if cfg.coding_max_file_size_bytes < 1:
         raise ConfigurationError(f"coding_max_file_size_bytes must be >= 1, got {cfg.coding_max_file_size_bytes}")
+
+    _validate_worker_settings(cfg)
 
     # Persistence backend validation (fail-closed if durable persistence is misconfigured)
     if cfg.persistence_backend not in ("sqlite", "in_memory"):
@@ -120,6 +134,44 @@ def validate_settings(cfg: "Settings") -> list:
         warnings.append(f"Unrecognized audit_storage_type '{cfg.audit_storage_type}'; expected 'sqlite' or 'in_memory'")
 
     return warnings
+
+
+def _validate_worker_settings(cfg: "Settings") -> None:
+    """Fail closed on worker timing settings that would make leases or stale detection unsafe."""
+    from baby.errors import ConfigurationError
+
+    def _bounded(name: str, low: float, high: float) -> float:
+        value = getattr(cfg, name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not (low <= value <= high):
+            raise ConfigurationError(f"{name} must be between {low} and {high}, got {value!r}")
+        return float(value)
+
+    _bounded("worker_count", 1, 32)
+    if not isinstance(cfg.worker_count, int):
+        raise ConfigurationError(f"worker_count must be an integer, got {cfg.worker_count!r}")
+    _bounded("worker_poll_interval_seconds", 0.01, 60)
+    heartbeat = _bounded("worker_heartbeat_interval_seconds", 0.01, 300)
+    stale = _bounded("worker_stale_timeout_seconds", 0.02, 3600)
+    lease = _bounded("task_lease_duration_seconds", 0.02, 3600)
+    _bounded("worker_shutdown_grace_seconds", 0, 600)
+    _bounded("worker_max_task_seconds", 1, 86400)
+
+    # A worker renews its heartbeat and lease once per heartbeat interval; requiring two
+    # missed intervals before a worker/lease is considered lost prevents false recovery.
+    if stale < 2 * heartbeat:
+        raise ConfigurationError(
+            "worker_stale_timeout_seconds must be at least 2 x worker_heartbeat_interval_seconds "
+            f"({stale} < 2 x {heartbeat})"
+        )
+    if lease < 2 * heartbeat:
+        raise ConfigurationError(
+            "task_lease_duration_seconds must be at least 2 x worker_heartbeat_interval_seconds "
+            f"({lease} < 2 x {heartbeat})"
+        )
+    if cfg.worker_enabled and cfg.persistence_backend != "sqlite":
+        raise ConfigurationError(
+            "worker_enabled=True requires persistence_backend='sqlite' (workers share state via SQLite)"
+        )
 
 
 # Global settings instance

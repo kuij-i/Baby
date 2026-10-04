@@ -28,6 +28,59 @@ AUDIT LOG
 FINAL RESPONSE
 ```
 
+### Durable workers and process isolation (Phase 12)
+
+Tasks never execute inside the API process. The API (or any client) enqueues a task
+durably; separate worker **processes** claim it from SQLite under a fenced lease and run
+the agent logic.
+
+```
+                    ┌───────────────────┐
+                    │    FastAPI API    │  POST /tasks/submit · GET /tasks/{id} · GET /workers
+                    └─────────┬─────────┘
+                              │ insert PENDING row (no execution)
+                              ▼
+                    ┌───────────────────┐
+                    │  SQLite (WAL)     │  task_records · task_leases · workers · audit_events
+                    └─────────┬─────────┘
+                              │ atomic claim (BEGIN IMMEDIATE) → lease + fence
+             ┌────────────────┴────────────────┐
+             ▼                                 ▼
+     ┌─────────────────┐             ┌─────────────────┐
+     │ Worker process 1│             │ Worker process 2│   heartbeat thread + lease watchdog
+     │  (spawned)      │             │  (spawned)      │
+     └────────┬────────┘             └────────┬────────┘
+              ▼                               ▼
+     Orchestrator → Agent → ToolExecutor (permissions · approvals · audit)
+              │                               │
+              └──────── fenced result write ──┘ → SQLite
+```
+
+```bash
+python -m baby.workers run --count 2     # start a supervised pool of worker processes
+python -m baby.workers status            # list registered workers
+python -m baby.workers recover           # fail closed any work whose worker/lease was lost
+```
+
+Or set `WORKER_ENABLED=true` to have the API start and stop the worker processes itself.
+A crashed or stale worker's task is marked **FAILED** with an explicit reason; it is
+**never replayed automatically**, because interrupted work may already have performed
+privileged or side-effecting operations. See `CLAUDE.md` → *Durable workers* for the full
+lifecycle, lease, heartbeat, recovery and approval semantics.
+
+| Setting | Default | Bounds | Meaning |
+|---|---|---|---|
+| `WORKER_ENABLED` | `false` | — | API lifespan supervises worker processes |
+| `WORKER_COUNT` | `1` | 1–32 | worker processes per supervisor |
+| `WORKER_POLL_INTERVAL_SECONDS` | `1.0` | 0.01–60 | idle wait between claim attempts |
+| `WORKER_HEARTBEAT_INTERVAL_SECONDS` | `5.0` | 0.01–300 | heartbeat and lease-renewal cadence |
+| `WORKER_STALE_TIMEOUT_SECONDS` | `30.0` | ≥ 2 × heartbeat | heartbeat age after which a worker is STALE |
+| `TASK_LEASE_DURATION_SECONDS` | `60.0` | ≥ 2 × heartbeat | un-renewed lease lifetime |
+| `WORKER_SHUTDOWN_GRACE_SECONDS` | `10.0` | 0–600 | wait before terminating a stopping worker |
+| `WORKER_MAX_TASK_SECONDS` | `3600` | 1–86400 | bounded execution per claimed task |
+
+Invalid values raise `ConfigurationError` at startup. Defaults suit a single low-resource machine.
+
 ## Core Principles
 
 - **Production-quality code** with strong typing
@@ -52,9 +105,10 @@ baby/
   providers/             # Model provider abstraction (OpenAI-compatible)
   memory/                # MemoryStore interface + in-memory implementation
   audit/                 # Audit log
-  persistence/           # SQLite database manager and durable stores
+  persistence/           # SQLite database manager and durable stores (tasks, workers, audit, memory)
+  workers/               # Durable task queue, leases, worker runtime, recovery, supervisor
   observability/         # Task/worker tracking, metrics, health, redaction
-  api/                   # Read-only FastAPI observability API (+ /api/v1)
+  api/                   # FastAPI observability API (+ /api/v1); read-only except task control
   configuration.py       # Settings (pydantic-settings, .env)
   logging.py             # Structured logging
   errors.py              # Exception types
@@ -92,10 +146,11 @@ pytest tests/test_contracts.py
 pytest tests/test_contracts.py::TestTaskId::test_task_id_creation
 ```
 
-### Running the observability API
+### Running the observability API and workers
 
 ```bash
 uvicorn baby.api.app:app --reload
+python -m baby.workers run
 ```
 
 ### Code Quality
@@ -128,6 +183,7 @@ isort baby tests
 - [x] PHASE 9: Operational observability, audit visibility, and API authorization
 - [x] PHASE 10: Production reliability and lifecycle hardening
 - [x] PHASE 11: Architectural boundaries and durable SQLite persistence
+- [x] PHASE 12: Durable worker architecture and process isolation
 - [ ] Next: Verification layer, multi-step planning, UI, additional specialist teams
 
 ## Security
@@ -139,6 +195,7 @@ Baby is designed with security as a core principle:
 - **Audit logging** - all meaningful actions are recorded
 - **Secret management** - API keys and credentials are never committed
 - **Least privilege** - agents receive minimal necessary permissions
+- **Fail-closed workers** - interrupted work is failed, never replayed; workers cannot grant approvals
 
 ## License
 

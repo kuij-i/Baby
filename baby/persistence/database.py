@@ -6,6 +6,14 @@ Provides durable SQLite connection management with:
 - Automatic schema initialization with idempotent migrations
 - Thread-safe transaction boundaries with rollback guarantees
 - Safe handling of file-based, URI-based, and in-memory databases
+- ``immediate_transaction()`` (BEGIN IMMEDIATE) for cross-process read-modify-write
+  operations such as durable task claiming
+
+Schema versioning: ``init_schema()`` is idempotent and records the schema version in
+``PRAGMA user_version``. Version 2 (Phase 12) adds the ``workers`` and ``task_leases``
+tables and the ``task_records.cancel_requested`` / ``task_records.claim_count`` columns.
+Existing version-1 databases are upgraded in place with ``ALTER TABLE ... ADD COLUMN``
+(defaults keep existing rows valid); no data is rewritten or removed.
 """
 
 import sqlite3
@@ -19,6 +27,8 @@ from baby.errors import ConfigurationError
 from baby.logging import get_logger
 
 logger = get_logger(__name__)
+
+SCHEMA_VERSION = 2
 
 
 def parse_sqlite_path(database_url: str) -> str:
@@ -75,6 +85,22 @@ class DatabaseManager:
         return self._db_path
 
     @property
+    def database_url(self) -> str:
+        return self._database_url
+
+    def configure(self, database_url: str) -> None:
+        """Point this manager at a different database, closing any open connection.
+
+        Used by worker processes to bind the process-wide singleton to the database
+        their supervisor assigned, before any task work starts.
+        """
+        new_path = parse_sqlite_path(database_url)
+        with self._lock:
+            self.close()
+            self._database_url = database_url
+            self._db_path = new_path
+
+    @property
     def is_memory(self) -> bool:
         return self._db_path == ":memory:"
 
@@ -129,6 +155,27 @@ class DatabaseManager:
                 yield conn
                 conn.commit()
             except Exception:
+                conn.rollback()
+                raise
+
+    @contextmanager
+    def immediate_transaction(self) -> Generator[sqlite3.Connection, None, None]:
+        """Transaction that takes the SQLite write lock up front (``BEGIN IMMEDIATE``).
+
+        Use for every read-modify-write that other processes may race on (claiming,
+        lease renewal, status transitions). Concurrent writers in other processes wait
+        up to ``busy_timeout`` instead of failing on a stale read snapshot, and two
+        writers can never both observe the same pre-image.
+        """
+        with self._lock:
+            conn = self.get_connection()
+            if conn.in_transaction:
+                raise RuntimeError("immediate_transaction() cannot be nested inside another transaction")
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+                conn.commit()
+            except BaseException:
                 conn.rollback()
                 raise
 
@@ -197,8 +244,75 @@ class DatabaseManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON task_records(user_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON task_records(created_at);")
 
+                # Schema v2 (Phase 12): durable worker ownership and leases
+                self._add_column_if_missing(
+                    conn,
+                    "task_records",
+                    "cancel_requested",
+                    "INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1))",
+                )
+                self._add_column_if_missing(
+                    conn, "task_records", "claim_count", "INTEGER NOT NULL DEFAULT 0 CHECK (claim_count >= 0)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tasks_claim_queue ON task_records(status, priority, created_at);"
+                )
+
+                # 4. Workers: one row per worker process identity (never reused)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS workers (
+                        worker_id TEXT PRIMARY KEY,
+                        hostname TEXT NOT NULL,
+                        pid INTEGER NOT NULL,
+                        status TEXT NOT NULL CHECK (status IN (
+                            'starting', 'idle', 'busy', 'paused', 'stopping', 'stopped', 'stale', 'error'
+                        )),
+                        started_at TEXT NOT NULL,
+                        last_heartbeat_at TEXT NOT NULL,
+                        stopped_at TEXT,
+                        current_task_id TEXT REFERENCES task_records(task_id) ON DELETE SET NULL,
+                        tasks_completed INTEGER NOT NULL DEFAULT 0 CHECK (tasks_completed >= 0),
+                        tasks_failed INTEGER NOT NULL DEFAULT 0 CHECK (tasks_failed >= 0),
+                        last_error TEXT,
+                        metadata TEXT NOT NULL DEFAULT '{}'
+                    );
+                    """)
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_workers_status_heartbeat ON workers(status, last_heartbeat_at);"
+                )
+
+                # 5. Task leases: at most one live claim per task (PRIMARY KEY on task_id)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS task_leases (
+                        task_id TEXT PRIMARY KEY REFERENCES task_records(task_id) ON DELETE CASCADE,
+                        worker_id TEXT NOT NULL REFERENCES workers(worker_id) ON DELETE CASCADE,
+                        fence INTEGER NOT NULL CHECK (fence > 0),
+                        claimed_at TEXT NOT NULL,
+                        renewed_at TEXT NOT NULL,
+                        lease_expires_at TEXT NOT NULL
+                    );
+                    """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_task_leases_worker ON task_leases(worker_id);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_task_leases_expires ON task_leases(lease_expires_at);")
+
+                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
+
             self._initialized = True
             logger.info("Database schema initialized successfully")
+
+    @staticmethod
+    def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+        """Idempotent in-place migration helper (SQLite has no ADD COLUMN IF NOT EXISTS)."""
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table});").fetchall()}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl};")
+            logger.info("Database schema migrated", table=table, column=column)
+
+    def schema_version(self) -> int:
+        """Return the schema version recorded in ``PRAGMA user_version``."""
+        with self.transaction() as conn:
+            row = conn.execute("PRAGMA user_version;").fetchone()
+        return int(row[0]) if row else 0
 
     def close(self) -> None:
         """Close connection and reset state."""
@@ -213,5 +327,11 @@ class DatabaseManager:
                     self._initialized = False
 
 
-# Default database manager singleton
-db_manager = DatabaseManager()
+def _default_database_url() -> str:
+    from baby.configuration import settings
+
+    return settings.database_url or "sqlite:///./baby.db"
+
+
+# Default database manager singleton (honors settings.database_url)
+db_manager = DatabaseManager(_default_database_url())
