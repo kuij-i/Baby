@@ -12,16 +12,19 @@ Security model:
   (``consumed_at``) so a crash can never cause it to be replayed.
 - Approval state lives in the durable task record, so it is shared between the API and
   worker processes and survives restarts.
+- Approvals expire (``approval_ttl_seconds``): an undecided request older than the TTL can
+  no longer be decided, and a granted approval not consumed within the TTL can no longer
+  be used. Either way the task fails closed (``decide`` or worker recovery records it).
 """
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import UUID
 
 from baby.core import AgentId, ApprovalRequest, TaskId, TaskRecord, TaskStatus, ensure_valid_transition
-from baby.errors import InvalidStateTransitionError, TaskNotFoundError
+from baby.errors import ApprovalExpiredError, InvalidStateTransitionError, TaskNotFoundError
 from baby.logging import get_logger
 
 if TYPE_CHECKING:
@@ -57,6 +60,45 @@ def summarize_arguments(arguments: Dict[str, Any]) -> Dict[str, Any]:
     return redacted if isinstance(redacted, dict) else {}
 
 
+def approval_ttl(ttl_seconds: Optional[float] = None) -> timedelta:
+    """The approval lifetime (defaults to ``settings.approval_ttl_seconds``)."""
+    if ttl_seconds is None:
+        from baby.configuration import settings
+
+        ttl_seconds = settings.approval_ttl_seconds
+    return timedelta(seconds=ttl_seconds)
+
+
+def approval_expired(request: ApprovalRequest, now: datetime, ttl: timedelta) -> bool:
+    """True if an undecided request, or a granted but unconsumed approval, has outlived ``ttl``.
+
+    Denied and consumed requests are final and never "expire".
+    """
+    if request.approved is None:
+        return request.created_at + ttl < now
+    if request.approved is True and request.consumed_at is None:
+        granted_at = request.approval_timestamp or request.created_at
+        return granted_at + ttl < now
+    return False
+
+
+def expired_approval_reason(record: TaskRecord, now: datetime, ttl: timedelta) -> Optional[str]:
+    """Failure reason if any approval request on the record has expired, else None."""
+    for request in record.approvals:
+        if approval_expired(request, now, ttl):
+            hours = ttl.total_seconds() / 3600
+            if request.approved is None:
+                return (
+                    f"Approval request {request.request_id} for '{request.action_type}' expired without a "
+                    f"decision after {hours:g}h; task failed closed and was not executed"
+                )
+            return (
+                f"Approval granted for '{request.action_type}' (request {request.request_id}) was not used "
+                f"within {hours:g}h and expired; task failed closed"
+            )
+    return None
+
+
 class ApprovalService:
     """Creates, decides and consumes approval requests stored on durable task records."""
 
@@ -75,6 +117,7 @@ class ApprovalService:
         arguments: Dict[str, Any],
         reason: str,
         risk_level: str = "high",
+        now: Optional[datetime] = None,
     ) -> bool:
         """Consume a matching granted approval, or record a pending request.
 
@@ -83,6 +126,7 @@ class ApprovalService:
         marked consumed in the same transaction. Otherwise returns False (and records a
         pending request if none exists yet) so the caller must block the operation.
         Without a durable task record nothing can be approved, so this fails closed.
+        An expired grant is never consumed (and no new request is recorded for it).
         """
         store = self._store()
         if task_id is None or store is None:
@@ -90,6 +134,8 @@ class ApprovalService:
 
         digest = operation_digest(operation, str(agent_id), permission, arguments)
         granted = False
+        now = now or datetime.utcnow()
+        ttl = approval_ttl()
 
         with store.db.immediate_transaction() as conn:
             record: Optional[TaskRecord] = store.read_record(conn, task_id)
@@ -100,9 +146,9 @@ class ApprovalService:
                 if request.operation_digest != digest or request.engagement_id != record.user_id:
                     continue
                 if request.approved is True and request.consumed_at is None:
-                    if record.status != TaskStatus.IN_PROGRESS:
+                    if record.status != TaskStatus.IN_PROGRESS or approval_expired(request, now, ttl):
                         return False
-                    request.consumed_at = datetime.utcnow()
+                    request.consumed_at = now
                     granted = True
                     break
                 if request.approved is None:
@@ -123,7 +169,7 @@ class ApprovalService:
                         operation_summary=summarize_arguments(arguments),
                     )
                 )
-            record.updated_at = datetime.utcnow()
+            record.updated_at = now
             store.write_record(conn, record)
 
         logger.info(
@@ -141,6 +187,14 @@ class ApprovalService:
         record = store.get_task(task_id)
         return bool(record and any(a.approved is None for a in record.approvals))
 
+    def approval_rounds(self, task_id: TaskId) -> int:
+        """Number of approval requests recorded for the task (one per approval pause)."""
+        store = self._store()
+        if store is None:
+            return 0
+        record = store.get_task(task_id)
+        return len(record.approvals) if record else 0
+
     def decide(
         self,
         task_id: TaskId,
@@ -148,6 +202,7 @@ class ApprovalService:
         approved: bool,
         decided_by: str,
         reason: Optional[str] = None,
+        now: Optional[datetime] = None,
     ) -> TaskRecord:
         """Record a human approval decision. Callers must already have verified admin authority.
 
@@ -155,9 +210,12 @@ class ApprovalService:
         - Approve: the task stays AWAITING_APPROVAL; once no undecided requests remain a worker
           may claim it (AWAITING_APPROVAL → IN_PROGRESS) and consume the grant exactly once.
         - Deny: the task moves AWAITING_APPROVAL → FAILED (fail closed, nothing is executed).
+        - Expired request (older than ``approval_ttl_seconds``): no decision is recorded; the
+          task moves AWAITING_APPROVAL → FAILED and ``ApprovalExpiredError`` is raised.
 
         Raises:
             TaskNotFoundError: Unknown task or request.
+            ApprovalExpiredError: The request expired; the task was failed closed.
             InvalidStateTransitionError: Task not awaiting approval or request already decided.
         """
         store = self._store()
@@ -176,17 +234,30 @@ class ApprovalService:
             if request.approved is not None:
                 raise InvalidStateTransitionError(f"Approval request {request_id} was already decided")
 
-            now = datetime.utcnow()
-            request.approved = approved
-            request.approval_timestamp = now
-            request.decided_by = decided_by
-            record.updated_at = now
-            if not approved:
+            now = now or datetime.utcnow()
+            expired_reason = expired_approval_reason(record, now, approval_ttl())
+            if expired_reason is not None:
+                # Too late to decide: fail the task closed instead of recording the decision.
                 ensure_valid_transition(task_id, record.status, TaskStatus.FAILED)
                 record.status = TaskStatus.FAILED
-                record.error = f"Approval denied for '{request.action_type}'" + (f": {reason}" if reason else "")
+                record.error = expired_reason
+                record.updated_at = now
                 record.completed_at = now
-            store.write_record(conn, record)
+                store.write_record(conn, record)
+            else:
+                request.approved = approved
+                request.approval_timestamp = now
+                request.decided_by = decided_by
+                record.updated_at = now
+                if not approved:
+                    ensure_valid_transition(task_id, record.status, TaskStatus.FAILED)
+                    record.status = TaskStatus.FAILED
+                    record.error = f"Approval denied for '{request.action_type}'" + (f": {reason}" if reason else "")
+                    record.completed_at = now
+                store.write_record(conn, record)
+        if expired_reason is not None:
+            logger.warning("Approval decision rejected: request expired", task_id=str(task_id))
+            raise ApprovalExpiredError(expired_reason)
         return record
 
 

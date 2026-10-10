@@ -38,6 +38,8 @@ FORWARDABLE_SETTINGS = frozenset(
         "worker_stale_timeout_seconds",
         "task_lease_duration_seconds",
         "worker_max_task_seconds",
+        "approval_ttl_seconds",
+        "max_approval_rounds",
         "log_level",
     }
 )

@@ -74,11 +74,18 @@ class LeaseState:
     lease_expires_at: Optional[datetime] = None
 
 
-def approvals_ready(record: TaskRecord) -> bool:
-    """AWAITING_APPROVAL task may resume: nothing undecided and an unconsumed grant exists."""
+def approvals_ready(record: TaskRecord, now: Optional[datetime] = None) -> bool:
+    """AWAITING_APPROVAL task may resume: nothing undecided and an unexpired, unconsumed grant exists.
+
+    A task with an expired approval never resumes; recovery fails it closed.
+    """
+    from baby.permissions.approvals import approval_ttl, expired_approval_reason
+
     if not record.approvals:
         return False
     if any(a.approved is None for a in record.approvals):
+        return False
+    if expired_approval_reason(record, now or utcnow(), approval_ttl()) is not None:
         return False
     return any(a.approved is True and a.consumed_at is None for a in record.approvals)
 
@@ -180,7 +187,7 @@ class DurableTaskQueue:
                 (TaskStatus.AWAITING_APPROVAL.value,),
             ).fetchall():
                 rec = self._tasks.read_record(conn, TaskId(id=UUID(row["task_id"])))
-                if rec is not None and approvals_ready(rec):
+                if rec is not None and approvals_ready(rec, now):
                     candidates.append(rec)
             if not candidates:
                 return None
@@ -308,6 +315,9 @@ class DurableTaskQueue:
                 record.assigned_agent_id = result.agent_id
             if error is not None:
                 record.error = error
+            elif status == TaskStatus.COMPLETED:
+                # Clear an error left by an earlier approval pause; a completed task has none.
+                record.error = None
             if status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
                 record.completed_at = now
             self._tasks.write_record(conn, record)

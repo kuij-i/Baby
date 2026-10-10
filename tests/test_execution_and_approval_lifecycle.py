@@ -1,31 +1,42 @@
-"""Phase 17 / M2: truthful task execution.
+"""Phase 17 / M2: truthful task execution and approval lifecycle.
 
 Covers:
 - D1: a model provider is optional. When OPENAI_API_KEY is configured the worker bootstrap
   registers the OpenAI-compatible provider; without one the CodingAgent runs explicit tool
   steps and "list files" requests and fails every other step instead of reporting success.
+- Approval expiry (approval_ttl_seconds): undecided requests and unused grants expire; an
+  expired request cannot be decided, an expired grant is never claimed or consumed, and
+  recovery fails such tasks closed.
+- Approval-round cap (max_approval_rounds): a task that keeps needing approval fails closed
+  instead of pausing again.
 """
 
 import json
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
 
 from baby.agents import agent_registry
 from baby.agents.coding import CODING_AGENT_PERMISSIONS, CodingAgent, create_default_coding_spec
+from baby.api.app import app
 from baby.audit import audit_log
-from baby.configuration import settings
+from baby.configuration import Settings, settings, validate_settings
 from baby.core import (
+    AgentId,
     AuditEventType,
     ExecutionContext,
     PlanStep,
     Task,
     TaskStatus,
 )
+from baby.errors import ApprovalExpiredError, ConfigurationError, InvalidStateTransitionError
 from baby.observability import task_tracker, worker_tracker
 from baby.permissions import permission_manager
+from baby.permissions.approvals import approval_service
 from baby.persistence.database import db_manager
 from baby.persistence.sqlite_workers import SQLiteWorkerStore
 from baby.providers.base import ModelProvider
@@ -33,7 +44,9 @@ from baby.providers.openai_provider import OpenAIProvider
 from baby.providers.registry import provider_registry, register_configured_providers
 from baby.providers.types import ProviderResponse, TokenUsage
 from baby.workers.bootstrap import default_bootstrap
-from baby.workers.queue import DurableTaskQueue
+from baby.workers.process import FORWARDABLE_SETTINGS
+from baby.workers.queue import DurableTaskQueue, approvals_ready
+from baby.workers.recovery import REASON_APPROVAL_EXPIRED, WorkerRecovery
 from baby.workers.runtime import WorkerRuntime, WorkerRuntimeConfig, new_worker_id
 
 ENG = "eng-m2"
@@ -244,3 +257,210 @@ class TestProviderRegistration:
             with patch.object(settings, "openai_api_key", "sk-test-not-a-real-key-000000000000"):
                 default_bootstrap()
         assert [p.name for p in provider_registry.list_providers()] == ["openai"]
+
+
+# ============================================================================
+# Approval expiry
+# ============================================================================
+
+
+def _park_with_request(priority: int = 9) -> Any:
+    """Submit a high-priority task, run it once so it parks with one plan-step request."""
+    from tests.worker_helpers import bootstrap_scripted_agent
+
+    bootstrap_scripted_agent()
+    return _submit("privileged", priority=priority)
+
+
+class TestApprovalExpiry:
+    @pytest.fixture(autouse=True)
+    def _short_ttl(self):
+        with patch.object(settings, "approval_ttl_seconds", 60.0):
+            yield
+
+    async def _parked(self) -> Any:
+        record = _park_with_request()
+        runtime = _runtime()
+        runtime.startup()
+        try:
+            assert await _execute_next(runtime) == TaskStatus.AWAITING_APPROVAL
+        finally:
+            runtime.shutdown()
+        stored = task_tracker.get_task(record.task_id)
+        return stored, stored.approvals[0]  # type: ignore[union-attr]
+
+    async def test_decision_within_ttl_is_recorded(self):
+        record, request = await self._parked()
+        decided = approval_service.decide(
+            record.task_id, request.request_id, True, "admin-user", now=request.created_at + timedelta(seconds=59)
+        )
+        assert decided.status == TaskStatus.AWAITING_APPROVAL and decided.approvals[0].approved is True
+
+    async def test_expired_request_cannot_be_decided_and_fails_task(self):
+        record, request = await self._parked()
+        with pytest.raises(ApprovalExpiredError, match="expired without a decision"):
+            approval_service.decide(
+                record.task_id, request.request_id, True, "admin-user", now=request.created_at + timedelta(minutes=2)
+            )
+        stored = task_tracker.get_task(record.task_id)
+        assert stored.status == TaskStatus.FAILED  # type: ignore[union-attr]
+        assert stored.approvals[0].approved is None  # no decision recorded  # type: ignore[union-attr]
+        assert "expired" in stored.error  # type: ignore[union-attr,operator]
+
+    async def test_recovery_fails_expired_undecided_request(self):
+        record, request = await self._parked()
+        recovery = WorkerRecovery()
+        assert recovery.recover(now=request.created_at + timedelta(seconds=30)).expired_approval_tasks == []
+        report = recovery.recover(now=request.created_at + timedelta(minutes=2))
+        assert [r.task_id for r in report.expired_approval_tasks] == [record.task_id]
+        assert task_tracker.get_task(record.task_id).status == TaskStatus.FAILED  # type: ignore[union-attr]
+        assert recovery.recover(now=request.created_at + timedelta(minutes=3)).changed is False  # idempotent
+        events = audit_log.get_events(task_id=record.task_id, event_type=AuditEventType.TASK_FAILED)
+        assert any(e.details.get("reason") == REASON_APPROVAL_EXPIRED for e in events)
+
+    async def test_unused_grant_expires_and_is_never_claimed(self):
+        record, request = await self._parked()
+        granted_at = request.created_at + timedelta(seconds=10)
+        approval_service.decide(record.task_id, request.request_id, True, "admin-user", now=granted_at)
+        stored = task_tracker.get_task(record.task_id)
+        assert approvals_ready(stored, now=granted_at + timedelta(seconds=30)) is True  # type: ignore[arg-type]
+        assert approvals_ready(stored, now=granted_at + timedelta(minutes=2)) is False  # type: ignore[arg-type]
+
+        runtime = _runtime()
+        runtime.startup()
+        try:
+            assert runtime.queue.claim_next(runtime.worker_id, now=granted_at + timedelta(minutes=2)) is None
+        finally:
+            runtime.shutdown()
+        report = WorkerRecovery().recover(now=granted_at + timedelta(minutes=2))
+        assert [r.task_id for r in report.expired_approval_tasks] == [record.task_id]
+        failed = task_tracker.get_task(record.task_id)
+        assert failed.status == TaskStatus.FAILED and "was not used" in failed.error  # type: ignore[union-attr,operator]
+
+    async def test_expired_grant_is_never_consumed(self):
+        record, request = await self._parked()
+        granted_at = request.created_at + timedelta(seconds=10)
+        approval_service.decide(record.task_id, request.request_id, True, "admin-user", now=granted_at)
+        runtime = _runtime()
+        runtime.startup()
+        try:  # resume the task the normal way, inside the TTL
+            assert runtime.queue.claim_next(runtime.worker_id, now=granted_at + timedelta(seconds=20)) is not None
+        finally:
+            runtime.shutdown()
+        args = ("plan_step:1", "plan_step_approval", {"description": "privileged", "priority": 9}, "r")
+        late = granted_at + timedelta(minutes=2)
+        orchestrator = AgentId(id="orchestrator")
+        assert not approval_service.authorize_or_request(record.task_id, orchestrator, ENG, *args, now=late)
+        assert task_tracker.get_task(record.task_id).approvals[0].consumed_at is None  # type: ignore[union-attr]
+        on_time = granted_at + timedelta(seconds=30)
+        assert approval_service.authorize_or_request(
+            record.task_id, AgentId(id="orchestrator"), ENG, *args, now=on_time
+        )
+
+    async def test_api_returns_409_for_expired_request(self):
+        record, request = await self._parked()
+        with patch.multiple(
+            settings, api_require_auth=True, api_admin_token=ADMIN_TOKEN, api_auth_token=OPERATOR_TOKEN
+        ):
+            with patch("baby.permissions.approvals.datetime") as fake_dt:
+                fake_dt.utcnow.return_value = request.created_at + timedelta(minutes=5)
+                resp = TestClient(app, raise_server_exceptions=False).post(
+                    f"/api/v1/tasks/{record.task_id}/approvals/{request.request_id}",
+                    json={"approved": True},
+                    headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
+                )
+        assert resp.status_code == 409 and "expired" in resp.json()["detail"]
+        assert task_tracker.get_task(record.task_id).status == TaskStatus.FAILED  # type: ignore[union-attr]
+        events = audit_log.get_events(task_id=record.task_id, event_type=AuditEventType.TASK_FAILED)
+        assert any(e.details.get("reason") == "approval_expired" for e in events)
+
+
+class TestCompletedAfterApproval:
+    async def test_completed_task_carries_no_stale_approval_error(self):
+        record = _park_with_request()
+        runtime = _runtime()
+        runtime.startup()
+        try:
+            assert await _execute_next(runtime) == TaskStatus.AWAITING_APPROVAL
+            parked = task_tracker.get_task(record.task_id)
+            assert parked.error == "Approval required for plan step 1"  # type: ignore[union-attr]
+            approval_service.decide(record.task_id, parked.approvals[0].request_id, True, "admin-user")  # type: ignore
+            assert await _execute_next(runtime) == TaskStatus.COMPLETED
+        finally:
+            runtime.shutdown()
+        done = task_tracker.get_task(record.task_id)
+        assert done.status == TaskStatus.COMPLETED and done.error is None  # type: ignore[union-attr]
+
+
+# ============================================================================
+# Approval-round cap
+# ============================================================================
+
+
+class TestApprovalRoundCap:
+    async def test_non_converging_approval_loop_fails_closed_after_cap(self, repo):
+        _register_coding_agent(repo, provider=_ShiftingWriteProvider())
+        runtime = _runtime()
+        runtime.startup()
+        try:
+            record = _submit("keep writing")
+            with patch.object(settings, "max_approval_rounds", 3):
+                for round_number in (1, 2, 3):
+                    assert await _execute_next(runtime) == TaskStatus.AWAITING_APPROVAL, round_number
+                    pending = task_tracker.get_task(record.task_id).approvals[-1]  # type: ignore[union-attr]
+                    approval_service.decide(record.task_id, pending.request_id, True, "admin-user")
+                assert await _execute_next(runtime) == TaskStatus.FAILED
+        finally:
+            runtime.shutdown()
+        stored = task_tracker.get_task(record.task_id)
+        assert stored.status == TaskStatus.FAILED  # type: ignore[union-attr]
+        assert "max_approval_rounds (3)" in stored.error  # type: ignore[union-attr,operator]
+        assert len(stored.approvals) == 4  # type: ignore[union-attr]
+        with pytest.raises(InvalidStateTransitionError):
+            approval_service.decide(record.task_id, stored.approvals[-1].request_id, True, "admin-user")  # type: ignore
+        assert sorted(p.name for p in repo.iterdir()) == ["hello.txt"]  # no write ever ran unapproved
+
+    async def test_tasks_within_the_cap_still_pause(self, repo):
+        _register_coding_agent(repo, provider=_ShiftingWriteProvider())
+        runtime = _runtime()
+        runtime.startup()
+        try:
+            record = _submit("keep writing")
+            with patch.object(settings, "max_approval_rounds", 1):
+                assert await _execute_next(runtime) == TaskStatus.AWAITING_APPROVAL
+                pending = task_tracker.get_task(record.task_id).approvals[-1]  # type: ignore[union-attr]
+                approval_service.decide(record.task_id, pending.request_id, True, "admin-user")
+                assert await _execute_next(runtime) == TaskStatus.FAILED
+        finally:
+            runtime.shutdown()
+        assert "max_approval_rounds (1)" in task_tracker.get_task(record.task_id).error  # type: ignore[union-attr,operator]
+
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+
+class TestApprovalSettings:
+    def test_defaults(self):
+        fresh = Settings()
+        assert fresh.approval_ttl_seconds == 86400.0 and fresh.max_approval_rounds == 3
+        validate_settings(fresh)
+
+    @pytest.mark.parametrize("value", [0, 59, 2_592_001, True, "x"])
+    def test_ttl_bounds(self, value):
+        cfg = Settings()
+        cfg.approval_ttl_seconds = value  # type: ignore[assignment]
+        with pytest.raises(ConfigurationError, match="approval_ttl_seconds"):
+            validate_settings(cfg)
+
+    @pytest.mark.parametrize("value", [0, 21, 2.5, True])
+    def test_round_bounds(self, value):
+        cfg = Settings()
+        cfg.max_approval_rounds = value  # type: ignore[assignment]
+        with pytest.raises(ConfigurationError, match="max_approval_rounds"):
+            validate_settings(cfg)
+
+    def test_settings_forwarded_to_worker_processes(self):
+        assert {"approval_ttl_seconds", "max_approval_rounds"} <= FORWARDABLE_SETTINGS
+        assert "openai_api_key" not in FORWARDABLE_SETTINGS  # secrets come from the environment
