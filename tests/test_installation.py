@@ -45,7 +45,7 @@ class TestConfigurationAndFirstRun:
             validate_settings(cfg)
 
     def test_insecure_auth_warning_emitted_for_dev_mode(self):
-        cfg = Settings(api_require_auth=False)
+        cfg = Settings(api_require_auth=False, development_mode=True)
         warnings = validate_settings(cfg)
         assert any("api_require_auth=False" in w for w in warnings)
 
@@ -168,6 +168,7 @@ class TestApiStartupAndReadiness:
             "baby.configuration.settings",
             database_url=f"sqlite:///{db_file}",
             api_require_auth=False,
+            development_mode=True,
         ):
             with TestClient(app, raise_server_exceptions=True) as client:
                 health = client.get("/api/v1/health")

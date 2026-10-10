@@ -12,19 +12,25 @@ via BABY_OPERATOR_ENGAGEMENTS (comma-separated). The header is used to SELECT
 which of the caller's pre-authorized engagements to scope the query to, not to
 expand the caller's authorization.
 
-When api_require_auth=False the system runs in development-only permissive mode.
+Authentication can only be disabled with api_require_auth=False AND development_mode=True
+(development-only permissive mode, every caller is admin). api_require_auth=False on its
+own is rejected at startup and, if reached at runtime, authentication stays enforced.
 This must NEVER be used in production.
+
+Token checks compare UTF-8 bytes in constant time, so arbitrary (including non-ASCII)
+input yields 401, never a server error. Configured tokens that violate the credential
+policy (placeholder, too short, identical admin/operator) never authenticate anyone.
 """
 
 import secrets
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Set
+from typing import Dict, Optional, Set, Tuple
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
-from baby.configuration import settings
+from baby.configuration import api_token_problem, settings, tokens_identical
 from baby.logging import get_logger
 
 logger = get_logger(__name__)
@@ -115,6 +121,34 @@ def _parse_operator_engagements() -> Set[str]:
     return {e.strip() for e in raw.split(",") if e.strip()}
 
 
+def _token_matches(presented: str, configured: Optional[str]) -> bool:
+    """Constant-time comparison of a presented token against a configured one, as bytes."""
+    if not configured:
+        return False
+    return secrets.compare_digest(
+        presented.encode("utf-8", "surrogatepass"), configured.encode("utf-8", "surrogatepass")
+    )
+
+
+def _usable_tokens() -> Tuple[Optional[str], Optional[str]]:
+    """Return (admin_token, operator_token), dropping any that violate the credential policy.
+
+    Startup validation rejects such configurations; this keeps authentication fail-closed
+    even if settings are changed at runtime without re-validation.
+    """
+    usable: Dict[str, Optional[str]] = {}
+    for name in ("api_admin_token", "api_auth_token"):
+        value = getattr(settings, name)
+        if api_token_problem(name, value):
+            logger.warning("Configured API token rejected by credential policy", setting=name)
+            value = None
+        usable[name] = value
+    if tokens_identical(usable["api_admin_token"], usable["api_auth_token"]):
+        logger.warning("api_auth_token and api_admin_token are identical; both rejected")
+        return None, None
+    return usable["api_admin_token"], usable["api_auth_token"]
+
+
 def get_current_caller(
     auth_header: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
     x_api_key: Optional[str] = Depends(security_api_key),
@@ -139,7 +173,9 @@ def get_current_caller(
     elif x_api_key:
         token = x_api_key.strip()
 
-    if settings.api_require_auth:
+    # Authentication is skipped only when it is explicitly disabled AND development mode is
+    # explicitly enabled. api_require_auth=False alone keeps authentication enforced.
+    if settings.api_require_auth or not settings.development_mode:
         if not token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -147,8 +183,10 @@ def get_current_caller(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        admin_token, operator_token = _usable_tokens()
+
         # Check admin token — server-configured, never derived from request headers
-        if settings.api_admin_token and secrets.compare_digest(token, settings.api_admin_token):
+        if _token_matches(token, admin_token):
             return AuthenticatedCaller(
                 caller_id="admin-user",
                 role=Role.ADMIN,
@@ -157,7 +195,7 @@ def get_current_caller(
 
         # Check standard operator/api token
         # allowed_engagements comes from server-side configuration only
-        if settings.api_auth_token and secrets.compare_digest(token, settings.api_auth_token):
+        if _token_matches(token, operator_token):
             operator_engagements = _parse_operator_engagements()
             return AuthenticatedCaller(
                 caller_id="operator-user",
@@ -173,11 +211,11 @@ def get_current_caller(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Auth not enforced — development/local mode ONLY.
+    # Auth explicitly disabled with development_mode=True — local development ONLY.
     # IMPORTANT: This mode must NOT be used in production.
     # In this mode callers get full admin scope to allow local testing.
     # No engagement-scoping is applied from request headers.
-    logger.debug("API running in unauthenticated development mode (api_require_auth=False)")
+    logger.debug("API running in unauthenticated development mode (development_mode=True)")
     return AuthenticatedCaller(
         caller_id="local-dev-user",
         role=Role.ADMIN,

@@ -111,6 +111,16 @@ class WorkerSupervisor:
             if db_manager.is_memory:
                 raise ConfigurationError("Workers require a file-backed SQLite database, not :memory:")
             self._database_url = absolute_database_url(db_manager.db_path)
+        if self._bootstrap == DEFAULT_BOOTSTRAP:
+            # Fail before spawning anything: each worker would refuse to start (config exit, never
+            # restarted) with the same error, leaving the supervisor running with no workers.
+            from baby.persistence.database import parse_sqlite_path
+            from baby.tools.coding.path_resolver import validate_coding_repo_root
+
+            validate_coding_repo_root(
+                repo_root=self._forwarded_settings().get("coding_repo_root"),
+                database_path=parse_sqlite_path(self._database_url),
+            )
         db_manager.init_schema()
         self._recovery = WorkerRecovery()
         self._recovery.recover()

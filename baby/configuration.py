@@ -1,5 +1,6 @@
 """Configuration management for BABY."""
 
+import secrets
 from typing import Optional
 
 from pydantic import Field
@@ -49,6 +50,9 @@ class Settings(BaseSettings):
     api_auth_token: Optional[str] = None
     api_admin_token: Optional[str] = None
     api_require_auth: bool = True
+    # Explicit local development mode. Disabling authentication (api_require_auth=False) is
+    # rejected unless this is also True, because every caller then gets admin access.
+    development_mode: bool = False
     metrics_enabled: bool = True
     # Comma-separated list of engagement IDs the operator token is authorized for.
     # Controls server-side what an authenticated operator can access.
@@ -74,6 +78,41 @@ class Settings(BaseSettings):
         case_sensitive = False
 
 
+# Minimum length for configured API bearer tokens (secrets.token_hex(24) yields 48 characters).
+MIN_API_TOKEN_LENGTH = 32
+
+# Exact values shipped in earlier .env.example templates, plus markers of template text.
+KNOWN_PLACEHOLDER_TOKENS = frozenset({"change-me-operator-token", "change-me-admin-token"})
+PLACEHOLDER_TOKEN_MARKERS = ("change-me", "changeme", "replace-me", "replaceme", "placeholder", "your-token")
+
+TOKEN_GENERATION_HINT = 'generate one with: python -c "import secrets; print(secrets.token_hex(24))"'
+
+
+def api_token_problem(name: str, value: Optional[str]) -> Optional[str]:
+    """Return why a configured API token is unacceptable, or None if it is acceptable.
+
+    An unset or empty token is "not configured" and returns None. The returned message
+    names the setting but never contains the token value.
+    """
+    if not value:
+        return None
+    if value != value.strip():
+        return f"{name} must not have leading or trailing whitespace"
+    lowered = value.lower()
+    if lowered in KNOWN_PLACEHOLDER_TOKENS or any(marker in lowered for marker in PLACEHOLDER_TOKEN_MARKERS):
+        return f"{name} is a placeholder value; set a unique secret ({TOKEN_GENERATION_HINT})"
+    if len(value) < MIN_API_TOKEN_LENGTH:
+        return f"{name} must be at least {MIN_API_TOKEN_LENGTH} characters ({TOKEN_GENERATION_HINT})"
+    return None
+
+
+def tokens_identical(first: Optional[str], second: Optional[str]) -> bool:
+    """Constant-time check that two configured tokens are both set and equal."""
+    if not first or not second:
+        return False
+    return secrets.compare_digest(first.encode("utf-8", "surrogatepass"), second.encode("utf-8", "surrogatepass"))
+
+
 def validate_settings(cfg: "Settings") -> list:
     """Validate the given Settings instance and return a list of warning strings.
 
@@ -97,6 +136,7 @@ def validate_settings(cfg: "Settings") -> list:
         raise ConfigurationError(f"coding_max_file_size_bytes must be >= 1, got {cfg.coding_max_file_size_bytes}")
 
     _validate_worker_settings(cfg)
+    _validate_api_auth_settings(cfg)
 
     # Persistence backend validation (fail-closed if durable persistence is misconfigured)
     if cfg.persistence_backend not in ("sqlite", "in_memory"):
@@ -111,7 +151,7 @@ def validate_settings(cfg: "Settings") -> list:
                 "Do not fall back silently to in-memory mode in production."
             )
 
-    # Non-critical: auth configuration warnings
+    # Non-critical: auth configuration warnings (critical auth checks run above)
     if cfg.api_require_auth and not cfg.api_auth_token and not cfg.api_admin_token:
         warnings.append(
             "api_require_auth=True but no api_auth_token or api_admin_token configured; "
@@ -121,7 +161,8 @@ def validate_settings(cfg: "Settings") -> list:
     # Non-critical: development mode warning
     if not cfg.api_require_auth:
         warnings.append(
-            "api_require_auth=False (development mode): all callers get admin access; DO NOT use in production"
+            "api_require_auth=False (development mode, development_mode=True): all callers get admin access; "
+            "bind to 127.0.0.1 only and DO NOT use in production"
         )
 
     # Non-critical: unknown storage type warnings
@@ -134,6 +175,27 @@ def validate_settings(cfg: "Settings") -> list:
         warnings.append(f"Unrecognized audit_storage_type '{cfg.audit_storage_type}'; expected 'sqlite' or 'in_memory'")
 
     return warnings
+
+
+def _validate_api_auth_settings(cfg: "Settings") -> None:
+    """Fail closed on API credential settings that would make authentication guessable or bypassable."""
+    from baby.errors import ConfigurationError
+
+    if not cfg.api_require_auth and not cfg.development_mode:
+        raise ConfigurationError(
+            "api_require_auth=False disables authentication and gives every caller admin access; it is only "
+            "allowed together with development_mode=True (DEVELOPMENT_MODE=true) on a local machine. "
+            "Set API_REQUIRE_AUTH=true and configure API_AUTH_TOKEN / API_ADMIN_TOKEN for any other deployment."
+        )
+    for name in ("api_auth_token", "api_admin_token"):
+        problem = api_token_problem(name, getattr(cfg, name))
+        if problem:
+            raise ConfigurationError(problem)
+    if cfg.api_require_auth and tokens_identical(cfg.api_auth_token, cfg.api_admin_token):
+        raise ConfigurationError(
+            "api_auth_token and api_admin_token must be different: an identical value would give operators "
+            "admin access. Generate a separate secret for each."
+        )
 
 
 def _validate_worker_settings(cfg: "Settings") -> None:

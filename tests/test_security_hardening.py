@@ -50,6 +50,7 @@ def _reset_state():
     # Reset settings to safe defaults
     original = {
         "api_require_auth": settings.api_require_auth,
+        "development_mode": settings.development_mode,
         "api_admin_token": settings.api_admin_token,
         "api_auth_token": settings.api_auth_token,
         "operator_engagements": settings.operator_engagements,
@@ -68,14 +69,14 @@ def _reset_state():
 @pytest.fixture()
 def client_auth_required():
     """TestClient with auth strictly enforced.
-    Operator token 'op-token' is authorized for engagement-A ONLY (server-side).
-    Admin token 'admin-token' has wildcard access.
+    Operator token 'op-token-for-tests-0123456789abcdef' is authorized for engagement-A ONLY (server-side).
+    Admin token 'admin-token-for-tests-0123456789abcdef' has wildcard access.
     """
     from baby.api.app import app
 
     settings.api_require_auth = True
-    settings.api_admin_token = "admin-token"
-    settings.api_auth_token = "op-token"
+    settings.api_admin_token = "admin-token-for-tests-0123456789abcdef"
+    settings.api_auth_token = "op-token-for-tests-0123456789abcdef"
     # Server-side: operator is authorized for engagement-A only
     settings.operator_engagements = "engagement-A"
 
@@ -84,12 +85,13 @@ def client_auth_required():
 
 @pytest.fixture()
 def client_no_auth():
-    """TestClient in dev mode (api_require_auth=False)."""
+    """TestClient in explicit dev mode (api_require_auth=False, development_mode=True)."""
     from baby.api.app import app
 
     settings.api_require_auth = False
-    settings.api_admin_token = "admin-token"
-    settings.api_auth_token = "op-token"
+    settings.development_mode = True
+    settings.api_admin_token = "admin-token-for-tests-0123456789abcdef"
+    settings.api_auth_token = "op-token-for-tests-0123456789abcdef"
     settings.operator_engagements = "engagement-A"
 
     return TestClient(app, raise_server_exceptions=False)
@@ -97,14 +99,14 @@ def client_no_auth():
 
 def op_headers(engagement_header: Optional[str] = None) -> dict:
     """Operator auth headers. engagement_header is the X-Engagement-ID value (optional)."""
-    h = {"Authorization": "Bearer op-token"}
+    h = {"Authorization": "Bearer op-token-for-tests-0123456789abcdef"}
     if engagement_header:
         h["X-Engagement-ID"] = engagement_header
     return h
 
 
 def admin_headers() -> dict:
-    return {"Authorization": "Bearer admin-token"}
+    return {"Authorization": "Bearer admin-token-for-tests-0123456789abcdef"}
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +159,7 @@ class TestEngagementScopeServerSide:
             "/tasks",
             # No query param — the header is how they try to scope
             headers={
-                "Authorization": "Bearer op-token",
+                "Authorization": "Bearer op-token-for-tests-0123456789abcdef",
                 "X-Engagement-ID": "engagement-B",  # attacker-controlled
             },
         )
@@ -176,7 +178,7 @@ class TestEngagementScopeServerSide:
             "/tasks",
             params={"engagement_id": "engagement-B"},
             headers={
-                "Authorization": "Bearer op-token",
+                "Authorization": "Bearer op-token-for-tests-0123456789abcdef",
                 "X-Engagement-ID": "engagement-B",
             },
         )
@@ -506,7 +508,9 @@ class TestAuthenticationBoundaries:
 
     def test_token_case_sensitive(self, client_auth_required):
         """Token comparison must be exact — case-sensitive."""
-        resp = client_auth_required.get("/tasks", headers={"Authorization": "Bearer OP-TOKEN"})
+        resp = client_auth_required.get(
+            "/tasks", headers={"Authorization": "Bearer OP-TOKEN-FOR-TESTS-0123456789ABCDEF"}
+        )
         assert resp.status_code == 401
 
     def test_admin_token_used_as_op_token_and_vice_versa(self, client_auth_required):
@@ -526,7 +530,7 @@ class TestAuthenticationBoundaries:
     def test_bearer_and_xapikey_both_work(self, client_auth_required):
         resp = client_auth_required.get(
             "/tasks",
-            headers={"X-API-Key": "op-token", "X-Engagement-ID": "engagement-A"},
+            headers={"X-API-Key": "op-token-for-tests-0123456789abcdef", "X-Engagement-ID": "engagement-A"},
         )
         assert resp.status_code == 200
 
@@ -535,7 +539,7 @@ class TestAuthenticationBoundaries:
         resp = client_auth_required.get(
             "/tasks",
             headers={
-                "Authorization": "Bearer op-token",
+                "Authorization": "Bearer op-token-for-tests-0123456789abcdef",
                 "X-Engagement-ID": "*",  # attacker tries wildcard
             },
         )
@@ -798,7 +802,7 @@ class TestPhase16SecurityHardeningRegression:
         )
         worker_tracker.assign_task("in-process-worker-admin", task_id)
 
-        headers = {"Authorization": "Bearer admin-token"}
+        headers = {"Authorization": "Bearer admin-token-for-tests-0123456789abcdef"}
         resp = client_auth_required.get("/workers/in-process-worker-admin", headers=headers)
         assert resp.status_code == 200
         data = resp.json()

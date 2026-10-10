@@ -179,15 +179,23 @@ cp .env.example .env
 
 Open `.env` in your text editor to configure settings:
 
-1. **Authentication (Mandatory for Production)**:
-   By default, `API_REQUIRE_AUTH=false` is set for rapid local testing. In non-development mode, set `API_REQUIRE_AUTH=true` and generate secure tokens:
+1. **Authentication (enforced by default)**:
+   `API_REQUIRE_AUTH=true` is the default. `.env.example` ships empty tokens; generate a separate secret for each:
    ```bash
    python -c "import secrets; print('API_AUTH_TOKEN=' + secrets.token_hex(24))"
    python -c "import secrets; print('API_ADMIN_TOKEN=' + secrets.token_hex(24))"
    ```
+   Startup fails closed (`ConfigurationError`) if a token is a placeholder (e.g. contains `change-me`), is shorter
+   than 32 characters, has surrounding whitespace, or if the operator and admin tokens are identical.
+   Disabling authentication (`API_REQUIRE_AUTH=false`) is only accepted together with `DEVELOPMENT_MODE=true`;
+   that gives every caller admin access, so use it only locally with the API bound to `127.0.0.1`.
 2. **Engagements**:
    Operators are scoped to specific engagement IDs (e.g., `OPERATOR_ENGAGEMENTS=default,engagement-1`). Requests can pass `X-Engagement-ID` to choose an active engagement.
-3. **Database URL**:
+3. **Coding repository root** (required by workers):
+   Set `CODING_REPO_ROOT` to the project directory the CodingAgent may read (writes need admin approval).
+   `python -m baby.workers run` refuses to start (exit code 2) if it is unset, missing, not a directory, inside a
+   `.git` directory, or contains Baby's database or `.env` file. Use a directory beside Baby's data, not above it.
+4. **Database URL**:
    Defaults to `sqlite:///baby.db`. Parent directories are automatically created on first boot. The database automatically initializes in WAL mode with busy timeout handling.
 
 ---
@@ -301,7 +309,9 @@ Baby uses SQLite with WAL mode (`baby.db`, `baby.db-wal`, `baby.db-shm`).
 |---|---|---|
 | `ConfigurationError: Database directory ... does not exist and could not be created` | Target directory has insufficient OS filesystem permissions or invalid path syntax. | Check `DATABASE_URL` in `.env`. Ensure your user has write permissions to the directory. |
 | `ConfigurationError: Worker stale timeout (...) must be at least 2x heartbeat (...)` | Configuration timing bounds violation. | Ensure `WORKER_STALE_TIMEOUT_SECONDS >= 2 * WORKER_HEARTBEAT_INTERVAL_SECONDS`. |
-| `HTTP 401 Unauthorized` | `API_REQUIRE_AUTH=true` is set, but token was missing or invalid. | Supply `-H "Authorization: Bearer <API_AUTH_TOKEN>"` or set `API_REQUIRE_AUTH=false` for local dev. |
+| `HTTP 401 Unauthorized` | `API_REQUIRE_AUTH=true` is set, but token was missing or invalid. | Supply `-H "Authorization: Bearer <API_AUTH_TOKEN>"`. For local-only dev, set both `API_REQUIRE_AUTH=false` and `DEVELOPMENT_MODE=true`. |
+| `ConfigurationError: api_... is a placeholder value` / `must be at least 32 characters` / `must be different` | API token fails the credential policy. | Generate a unique token per role with `python -c "import secrets; print(secrets.token_hex(24))"`. |
+| `Configuration error: Coding repository root ...` (workers exit 2) | `CODING_REPO_ROOT` unset, invalid, or contains Baby's database/`.env`. | Point `CODING_REPO_ROOT` at a separate project directory. |
 | `HTTP 403 Forbidden` | Operator attempted admin action (e.g. approval) or used an unpermitted engagement. | Supply the `API_ADMIN_TOKEN` or verify `OPERATOR_ENGAGEMENTS` in `.env`. |
 | `HTTP 405 Method Not Allowed` on `/tasks` | Direct `POST /tasks` is intentionally disabled to prevent bypass of queue. | Submit tasks to `/api/v1/tasks/submit`. |
 | Port 8000 already in use | Another service is using port 8000. | Run with `--port 8080` (or another free port). |
