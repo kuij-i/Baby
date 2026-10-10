@@ -19,10 +19,11 @@ black baby tests && isort baby tests    # format (120-char lines; not enforced i
 uvicorn baby.api.app:app --reload       # run the observability API (never executes tasks)
 python -m baby.workers run [--count N]  # run supervised worker processes (status | recover also available)
 python scripts/generate_ts_types.py     # export OpenAPI schema & generate clients/typescript/src/types.ts
-cd clients/typescript && npm test       # compile & run TypeScript client tests
+python scripts/generate_ts_types.py --check   # fail if docs/openapi.json or types.ts is stale (CI gate)
+cd clients/typescript && npm ci && npm test   # build (pinned typescript) & run client tests; Node >= 22.6
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff → mypy → pytest on Python 3.10/3.11/3.12 for pushes/PRs to `main`. Markers `unit`, `integration`, `slow` are registered; unregistered markers fail under `--strict-markers`. Prefer `python -m pytest` so tests run with the interpreter that has the package installed.
+CI (`.github/workflows/ci.yml`) runs on pushes/PRs to `main`: ruff → mypy → pytest with `--cov-fail-under=90` on Ubuntu (Python 3.10–3.13) and on Windows and macOS (3.10, 3.13); a contract job (`generate_ts_types.py --check`, then `npm ci && npm test` for the TypeScript client); a wheel build + clean-venv install smoke test; and `pip-audit` of runtime dependencies. Tests must not rewrite committed files (the contract test compares, it never writes). Markers `unit`, `integration`, `slow` are registered; unregistered markers fail under `--strict-markers`. Prefer `python -m pytest` so tests run with the interpreter that has the package installed.
 
 ## Architecture
 
