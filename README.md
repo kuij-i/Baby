@@ -319,6 +319,24 @@ Baby uses SQLite with WAL mode (`baby.db`, `baby.db-wal`, `baby.db-shm`).
 
 ---
 
+### Model Provider (optional)
+
+Set `OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL` / `DEFAULT_MODEL` for OpenAI-compatible
+NVIDIA or local endpoints) to let workers run the CodingAgent's bounded model loop. Without a key,
+workers only run explicit tool steps and "list files" requests; any other task is recorded as
+**FAILED** with `No model provider is configured` — Baby never reports work as completed when
+nothing was executed.
+
+### Approval Lifecycle
+
+- High-risk operations (file writes, priority ≥ 8 plan steps) pause the task in `AWAITING_APPROVAL`
+  until an admin decides via `POST /api/v1/tasks/{task_id}/approvals/{request_id}`.
+- Requests left undecided, and approvals granted but not used, expire after `APPROVAL_TTL_SECONDS`
+  (default 24h). Deciding an expired request returns `409` and fails the task; worker recovery also
+  fails expired tasks closed.
+- A resumed task re-runs from the start, so a task may pause for approval at most
+  `MAX_APPROVAL_ROUNDS` times (default 3); the next approval request fails it.
+
 ### Explicitly Unsupported Features
 
 To prevent architectural drift and security vulnerabilities, the following are explicitly **not supported**:
