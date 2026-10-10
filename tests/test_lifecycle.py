@@ -37,7 +37,7 @@ def reset_trackers():
 @pytest.fixture
 def client():
     """TestClient for API requests with auth disabled for test convenience."""
-    with patch("baby.configuration.settings.api_require_auth", False):
+    with patch.multiple("baby.configuration.settings", api_require_auth=False, development_mode=True):
         with TestClient(app) as c:
             yield c
 
@@ -310,13 +310,20 @@ class TestConfigurationValidation:
     def test_dev_mode_produces_warning(self):
         cfg = Settings()
         cfg.api_require_auth = False
+        cfg.development_mode = True
         warnings = validate_settings(cfg)
         assert any("development mode" in w for w in warnings)
+
+    def test_auth_disabled_without_development_mode_raises(self):
+        cfg = Settings()
+        cfg.api_require_auth = False
+        with pytest.raises(ConfigurationError, match="development_mode"):
+            validate_settings(cfg)
 
     def test_no_secrets_in_warnings(self):
         cfg = Settings()
         cfg.openai_api_key = "super-secret-openai-key-12345"
-        cfg.api_auth_token = "super-secret-auth-token-67890"
+        cfg.api_auth_token = "super-secret-auth-token-67890-abcdefgh"
         warnings = validate_settings(cfg)
         for w in warnings:
             assert "super-secret" not in w

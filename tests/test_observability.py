@@ -51,15 +51,21 @@ from baby.observability.redaction import redact_sensitive_data
 # ---------------------------------------------------------------------------
 
 
-def _make_client(auth_required: bool = False, admin_token: str = "admin-secret", op_token: str = "op-secret"):
+ADMIN_SECRET = "admin-secret-for-tests-0123456789abcdef"
+OP_SECRET = "op-secret-for-tests-0123456789abcdef"
+
+
+def _make_client(auth_required: bool = False, admin_token: str = ADMIN_SECRET, op_token: str = OP_SECRET):
     """Create a TestClient with specified auth settings applied."""
     from baby.api.app import app
 
     original_require = settings.api_require_auth
+    original_dev = settings.development_mode
     original_admin = settings.api_admin_token
     original_op = settings.api_auth_token
 
     settings.api_require_auth = auth_required
+    settings.development_mode = not auth_required
     settings.api_admin_token = admin_token
     settings.api_auth_token = op_token
 
@@ -67,6 +73,7 @@ def _make_client(auth_required: bool = False, admin_token: str = "admin-secret",
     yield client
 
     settings.api_require_auth = original_require
+    settings.development_mode = original_dev
     settings.api_admin_token = original_admin
     settings.api_auth_token = original_op
 
@@ -91,12 +98,14 @@ def _reset_global_state():
 def no_auth_client():
     from baby.api.app import app
 
-    settings.api_require_auth = False
-    settings.api_admin_token = "admin-secret"
-    settings.api_auth_token = "op-secret"
-    client = TestClient(app, raise_server_exceptions=False)
-    yield client
-    settings.api_require_auth = False
+    with patch.multiple(
+        settings,
+        api_require_auth=False,
+        development_mode=True,
+        api_admin_token=ADMIN_SECRET,
+        api_auth_token=OP_SECRET,
+    ):
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 @pytest.fixture()
@@ -104,12 +113,8 @@ def auth_client():
     """Client with auth enforced, using admin token."""
     from baby.api.app import app
 
-    settings.api_require_auth = True
-    settings.api_admin_token = "admin-secret"
-    settings.api_auth_token = "op-secret"
-    client = TestClient(app, raise_server_exceptions=False)
-    yield client
-    settings.api_require_auth = True
+    with patch.multiple(settings, api_require_auth=True, api_admin_token=ADMIN_SECRET, api_auth_token=OP_SECRET):
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +450,7 @@ class TestTasksAPIEndpoint:
         task_tracker.register_task(task)
 
         # Operator scoped to eng-1 should NOT see eng-2's task
-        headers = {"Authorization": "Bearer op-secret", "X-Engagement-ID": "eng-1"}
+        headers = {"Authorization": "Bearer op-secret-for-tests-0123456789abcdef", "X-Engagement-ID": "eng-1"}
         resp = auth_client.get(f"/tasks/{task.id.id}", headers=headers)
         assert resp.status_code == 404
 
@@ -703,7 +708,7 @@ class TestAuditAPIEndpoint:
         audit_log.record(AuditEventType.TASK_CREATED, user_id="eng-2")
 
         # Operator scoped to eng-1 should NOT see eng-2 events
-        headers = {"Authorization": "Bearer op-secret", "X-Engagement-ID": "eng-1"}
+        headers = {"Authorization": "Bearer op-secret-for-tests-0123456789abcdef", "X-Engagement-ID": "eng-1"}
         resp = auth_client.get("/audit", headers=headers)
         assert resp.status_code == 200
         assert resp.json() == []
@@ -713,7 +718,7 @@ class TestAuditAPIEndpoint:
         audit_log.record(AuditEventType.TASK_CREATED, user_id="eng-A")
         audit_log.record(AuditEventType.TASK_CREATED, user_id="eng-B")
 
-        headers = {"Authorization": "Bearer admin-secret"}
+        headers = {"Authorization": "Bearer admin-secret-for-tests-0123456789abcdef"}
         resp = auth_client.get("/audit", headers=headers)
         assert resp.status_code == 200
         # Admin can see all events
@@ -724,7 +729,7 @@ class TestAuditAPIEndpoint:
         task_id = TaskId()
         audit_log.record(AuditEventType.TASK_CREATED, task_id=task_id, user_id="eng-2")
 
-        headers = {"Authorization": "Bearer op-secret", "X-Engagement-ID": "eng-1"}
+        headers = {"Authorization": "Bearer op-secret-for-tests-0123456789abcdef", "X-Engagement-ID": "eng-1"}
         resp = auth_client.get(f"/audit?task_id={task_id.id}", headers=headers)
         assert resp.status_code == 200
         assert resp.json() == []
@@ -762,19 +767,19 @@ class TestAuthorization:
 
     def test_valid_op_token_accepted(self, auth_client):
         settings.api_require_auth = True
-        headers = {"Authorization": "Bearer op-secret", "X-Engagement-ID": "default"}
+        headers = {"Authorization": "Bearer op-secret-for-tests-0123456789abcdef", "X-Engagement-ID": "default"}
         resp = auth_client.get("/tasks", headers=headers)
         assert resp.status_code == 200
 
     def test_valid_admin_token_accepted(self, auth_client):
         settings.api_require_auth = True
-        headers = {"Authorization": "Bearer admin-secret"}
+        headers = {"Authorization": "Bearer admin-secret-for-tests-0123456789abcdef"}
         resp = auth_client.get("/tasks", headers=headers)
         assert resp.status_code == 200
 
     def test_api_key_header_accepted(self, auth_client):
         settings.api_require_auth = True
-        headers = {"X-API-Key": "op-secret", "X-Engagement-ID": "default"}
+        headers = {"X-API-Key": "op-secret-for-tests-0123456789abcdef", "X-Engagement-ID": "default"}
         resp = auth_client.get("/tasks", headers=headers)
         assert resp.status_code == 200
 

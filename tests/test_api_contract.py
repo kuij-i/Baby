@@ -46,7 +46,7 @@ def clean_test_env(tmp_path: Path):
 
 @pytest.fixture
 def client():
-    with patch("baby.configuration.settings.api_require_auth", False):
+    with patch.multiple("baby.configuration.settings", api_require_auth=False, development_mode=True):
         with TestClient(app) as c:
             yield c
 
@@ -54,8 +54,8 @@ def client():
 @pytest.fixture
 def auth_client():
     with patch("baby.configuration.settings.api_require_auth", True):
-        with patch("baby.configuration.settings.api_auth_token", "test-operator-token"):
-            with patch("baby.configuration.settings.api_admin_token", "test-admin-token"):
+        with patch("baby.configuration.settings.api_auth_token", "test-operator-token-0123456789abcdef"):
+            with patch("baby.configuration.settings.api_admin_token", "test-admin-token-0123456789abcdef"):
                 with patch("baby.configuration.settings.operator_engagements", "eng-a,eng-b"):
                     with TestClient(app) as c:
                         yield c
@@ -182,12 +182,12 @@ class TestSecurityAndAuthBoundaries:
         assert "Invalid credentials" in resp.json()["detail"]
 
     def test_operator_token_cannot_access_unauthorized_engagement(self, auth_client):
-        headers = {"Authorization": "Bearer test-operator-token"}
+        headers = {"Authorization": "Bearer test-operator-token-0123456789abcdef"}
         resp = auth_client.get("/api/v1/tasks?engagement_id=unauthorized-eng", headers=headers)
         assert resp.status_code == 403
 
     def test_non_admin_cannot_decide_approval(self, auth_client):
-        headers = {"Authorization": "Bearer test-operator-token"}
+        headers = {"Authorization": "Bearer test-operator-token-0123456789abcdef"}
         dummy_task_id = uuid4()
         dummy_req_id = uuid4()
         resp = auth_client.post(
@@ -199,7 +199,7 @@ class TestSecurityAndAuthBoundaries:
         assert "Admin role required" in resp.json()["detail"]
 
     def test_admin_token_authorizes_approval(self, auth_client):
-        headers = {"Authorization": "Bearer test-admin-token"}
+        headers = {"Authorization": "Bearer test-admin-token-0123456789abcdef"}
         dummy_task_id = uuid4()
         dummy_req_id = uuid4()
         resp = auth_client.post(

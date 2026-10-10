@@ -57,9 +57,9 @@ FAST_WORKER_SETTINGS: Dict[str, Any] = {
     "task_lease_duration_seconds": 2.0,
 }
 
-OP_A = {"Authorization": "Bearer op-token", "X-Engagement-ID": ENG_A}
-OP_B = {"Authorization": "Bearer op-token", "X-Engagement-ID": ENG_B}
-ADMIN = {"Authorization": "Bearer admin-token"}
+OP_A = {"Authorization": "Bearer op-token-for-tests-0123456789abcdef", "X-Engagement-ID": ENG_A}
+OP_B = {"Authorization": "Bearer op-token-for-tests-0123456789abcdef", "X-Engagement-ID": ENG_B}
+ADMIN = {"Authorization": "Bearer admin-token-for-tests-0123456789abcdef"}
 INVALID_AUTH = {"Authorization": "Bearer invalid-credentials"}
 
 
@@ -103,8 +103,8 @@ def api():
     with patch.multiple(
         settings,
         api_require_auth=True,
-        api_auth_token="op-token",
-        api_admin_token="admin-token",
+        api_auth_token="op-token-for-tests-0123456789abcdef",
+        api_admin_token="admin-token-for-tests-0123456789abcdef",
         operator_engagements=f"{ENG_A},{ENG_B}",
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
@@ -244,7 +244,7 @@ class TestAuthenticationAndAuthorizationE2E:
 
     def test_caller_cannot_expand_authorized_engagement_scope(self, api):
         forbidden_scope_header = {
-            "Authorization": "Bearer op-token",
+            "Authorization": "Bearer op-token-for-tests-0123456789abcdef",
             "X-Engagement-ID": "unauthorized-engagement",
         }
         resp = api.post(

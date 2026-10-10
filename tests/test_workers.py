@@ -945,16 +945,16 @@ def api():
     with patch.multiple(
         settings,
         api_require_auth=True,
-        api_auth_token="op-token",
-        api_admin_token="admin-token",
+        api_auth_token="op-token-for-tests-0123456789abcdef",
+        api_admin_token="admin-token-for-tests-0123456789abcdef",
         operator_engagements=ENG_A,
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
             yield client
 
 
-OP = {"Authorization": "Bearer op-token"}
-ADMIN = {"Authorization": "Bearer admin-token"}
+OP = {"Authorization": "Bearer op-token-for-tests-0123456789abcdef"}
+ADMIN = {"Authorization": "Bearer admin-token-for-tests-0123456789abcdef"}
 
 
 class TestApi:

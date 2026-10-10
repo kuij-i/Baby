@@ -30,7 +30,7 @@ from baby.tools.coding.filesystem import (
 
 @pytest.fixture
 def client():
-    with patch("baby.configuration.settings.api_require_auth", False):
+    with patch.multiple("baby.configuration.settings", api_require_auth=False, development_mode=True):
         with TestClient(app) as c:
             yield c
 
@@ -38,8 +38,8 @@ def client():
 @pytest.fixture
 def auth_client():
     with patch("baby.configuration.settings.api_require_auth", True):
-        with patch("baby.configuration.settings.api_auth_token", "test-auth-token"):
-            with patch("baby.configuration.settings.api_admin_token", "test-admin-token"):
+        with patch("baby.configuration.settings.api_auth_token", "test-auth-token-0123456789abcdef0123"):
+            with patch("baby.configuration.settings.api_admin_token", "test-admin-token-0123456789abcdef"):
                 with TestClient(app) as c:
                     yield c
 
@@ -180,7 +180,7 @@ class TestApiVersioning:
         assert auth_client.get("/api/v1/audit").status_code == 401
 
         # With authorization header, access is granted
-        headers = {"Authorization": "Bearer test-auth-token"}
+        headers = {"Authorization": "Bearer test-auth-token-0123456789abcdef0123"}
         assert auth_client.get("/api/v1/tasks", headers=headers).status_code == 200
         assert auth_client.get("/api/v1/metrics", headers=headers).status_code == 200
         assert auth_client.get("/api/v1/audit", headers=headers).status_code == 200
