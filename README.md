@@ -424,6 +424,7 @@ cd clients/typescript && npm test
 - [x] PHASE 13: Typed API contract and TypeScript client
 - [x] PHASE 14: End-to-end integration and reliability
 - [x] PHASE 15: Installation, deployment & first-run experience
+- [x] PHASE 16: Security and operational hardening
 - [ ] Next: Verification layer, multi-step planning, UI, additional specialist teams
 
 ## Security

@@ -734,3 +734,79 @@ class TestSecretRedactionRegression:
         details = events[0].get("details", {})
         assert details.get("tool") == "read_file"
         assert details.get("lines") == 42
+
+
+# ---------------------------------------------------------------------------
+# Phase 16 Security & Operational Hardening Regression Tests
+# ---------------------------------------------------------------------------
+
+
+class TestPhase16SecurityHardeningRegression:
+    def test_anthropic_key_scrubbed_from_audit(self, client_no_auth):
+        """Phase 16: Ensure Anthropic sk-ant- keys are scrubbed from strings in audit outputs."""
+        audit_log.record(
+            AuditEventType.TOOL_INVOKED,
+            details={"message": "Using key sk-ant-api03-abcdef1234567890abcdef1234567890"},
+        )
+        resp = client_no_auth.get("/audit")
+        assert "sk-ant-" not in resp.text
+        assert "[REDACTED]" in resp.text
+
+    def test_in_process_worker_sanitized_for_non_admin(self, client_auth_required):
+        """Phase 16: Non-admin caller must have in-process worker metadata and foreign task IDs sanitized."""
+        from baby.core import WorkerStatus
+
+        foreign_task_id = TaskId()
+        # Register a foreign task for engagement-B
+        task = Task(id=foreign_task_id, title="Secret B", description="Details B", user_id="engagement-B")
+        task_tracker.register_task(task)
+
+        # Register in-process worker on foreign task with sensitive host/process metadata
+        worker_tracker.register_worker(
+            worker_id="in-process-worker-1",
+            status=WorkerStatus.BUSY,
+            metadata={"hostname": "secret-node", "pid": 12345, "secret_env": "top-secret"},
+        )
+        worker_tracker.assign_task("in-process-worker-1", foreign_task_id)
+
+        # Operator (scoped to engagement-A) lists workers
+        resp = client_auth_required.get("/workers", headers=op_headers())
+        assert resp.status_code == 200
+        workers = resp.json()
+        target = next(w for w in workers if w["worker_id"] == "in-process-worker-1")
+        # Metadata must be stripped
+        assert target["metadata"] == {}
+        # Current task ID must be hidden since it belongs to engagement-B
+        assert target["current_task_id"] is None
+
+        # Direct get of in-process worker must also be sanitized
+        resp_single = client_auth_required.get("/workers/in-process-worker-1", headers=op_headers())
+        assert resp_single.status_code == 200
+        single = resp_single.json()
+        assert single["metadata"] == {}
+        assert single["current_task_id"] is None
+
+    def test_in_process_worker_not_sanitized_for_admin(self, client_auth_required):
+        """Phase 16: Admin callers see complete worker metadata."""
+        from baby.core import WorkerStatus
+
+        task_id = TaskId()
+        worker_tracker.register_worker(
+            worker_id="in-process-worker-admin",
+            status=WorkerStatus.BUSY,
+            metadata={"hostname": "prod-node-1", "pid": 9999},
+        )
+        worker_tracker.assign_task("in-process-worker-admin", task_id)
+
+        headers = {"Authorization": "Bearer admin-token"}
+        resp = client_auth_required.get("/workers/in-process-worker-admin", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["metadata"] == {"hostname": "prod-node-1", "pid": 9999}
+        assert data["current_task_id"]["id"] == str(task_id.id)
+
+    def test_constant_time_token_comparison_rejection(self, client_auth_required):
+        """Phase 16: Ensure constant-time token comparison rejects invalid tokens cleanly."""
+        resp = client_auth_required.get("/tasks", headers={"Authorization": "Bearer almost-op-token"})
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid credentials"

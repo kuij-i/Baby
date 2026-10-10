@@ -58,6 +58,8 @@ def _sanitize_string(val: str) -> str:
     sanitized = re.sub(r"(Bearer\s+)[a-zA-Z0-9_\-\.]{15,}", r"\1[REDACTED]", sanitized, flags=re.IGNORECASE)
     # OpenAI key regex
     sanitized = re.sub(r"sk-[a-zA-Z0-9_\-]{20,}", REDACTED_VALUE, sanitized, flags=re.IGNORECASE)
+    # Anthropic key regex
+    sanitized = re.sub(r"sk-ant-[a-zA-Z0-9_\-]{20,}", REDACTED_VALUE, sanitized, flags=re.IGNORECASE)
     # GitHub personal token regex
     sanitized = re.sub(r"ghp_[a-zA-Z0-9]{30,}", REDACTED_VALUE, sanitized, flags=re.IGNORECASE)
     return sanitized

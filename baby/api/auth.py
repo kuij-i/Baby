@@ -16,6 +16,7 @@ When api_require_auth=False the system runs in development-only permissive mode.
 This must NEVER be used in production.
 """
 
+import secrets
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Set
@@ -147,7 +148,7 @@ def get_current_caller(
             )
 
         # Check admin token — server-configured, never derived from request headers
-        if settings.api_admin_token and token == settings.api_admin_token:
+        if settings.api_admin_token and secrets.compare_digest(token, settings.api_admin_token):
             return AuthenticatedCaller(
                 caller_id="admin-user",
                 role=Role.ADMIN,
@@ -156,7 +157,7 @@ def get_current_caller(
 
         # Check standard operator/api token
         # allowed_engagements comes from server-side configuration only
-        if settings.api_auth_token and token == settings.api_auth_token:
+        if settings.api_auth_token and secrets.compare_digest(token, settings.api_auth_token):
             operator_engagements = _parse_operator_engagements()
             return AuthenticatedCaller(
                 caller_id="operator-user",

@@ -35,9 +35,9 @@ def _durable_workers(status_filter: Optional[WorkerStatus] = None) -> List[Worke
         return []
 
 
-def _durable_view(worker: WorkerInfo, caller: AuthenticatedCaller) -> Dict[str, Any]:
+def _sanitize_worker_view(worker: WorkerInfo, caller: AuthenticatedCaller, durable: bool = False) -> Dict[str, Any]:
     data: Dict[str, Any] = worker.model_dump()
-    data["durable"] = True
+    data["durable"] = durable
     if caller.is_admin:
         return data
     data["metadata"] = {}
@@ -55,9 +55,14 @@ def list_workers(
     caller: AuthenticatedCaller = Depends(get_current_caller),
 ) -> List[dict]:
     """Expose safe operational visibility into background/pool workers."""
-    workers = [w.model_dump() for w in worker_tracker.list_workers(status=status_filter)]
-    known = {w["worker_id"] for w in workers}
-    workers.extend(_durable_view(w, caller) for w in _durable_workers(status_filter) if w.worker_id not in known)
+    in_process = worker_tracker.list_workers(status=status_filter)
+    known = {w.worker_id for w in in_process}
+    workers = [_sanitize_worker_view(w, caller, durable=False) for w in in_process]
+    workers.extend(
+        _sanitize_worker_view(w, caller, durable=True)
+        for w in _durable_workers(status_filter)
+        if w.worker_id not in known
+    )
     return cast(List[Dict[str, Any]], [redact_sensitive_data(w) for w in workers])
 
 
@@ -69,14 +74,14 @@ def get_worker(
     """Retrieve operational state for a specific worker."""
     worker = worker_tracker.get_worker(worker_id)
     if worker:
-        return cast(Dict[str, Any], redact_sensitive_data(worker.model_dump()))
+        return cast(Dict[str, Any], redact_sensitive_data(_sanitize_worker_view(worker, caller, durable=False)))
     store = task_tracker.store
     if store is not None:
         from baby.persistence.sqlite_workers import SQLiteWorkerStore
 
         durable = SQLiteWorkerStore(store.db).get(worker_id)
         if durable is not None:
-            return cast(Dict[str, Any], redact_sensitive_data(_durable_view(durable, caller)))
+            return cast(Dict[str, Any], redact_sensitive_data(_sanitize_worker_view(durable, caller, durable=True)))
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Worker '{worker_id}' not found",

@@ -95,6 +95,11 @@ FastAPI app that is **read-only except task control**: `ReadOnlyMiddleware` retu
 - **Environment Template**: `.env.example` provides an exhaustive reference covering log levels, auth tokens, model providers, SQLite URLs, worker supervisor tuning, and coding agent sandbox paths.
 - **CLI Utilities**: Supervised worker processes run via `python -m baby.workers run [--count N]`, inspection via `python -m baby.workers status`, and crashed worker recovery via `python -m baby.workers recover`.
 
+### Security & Operational Hardening (Phase 16)
+- **Constant-Time Auth Verification**: Token checks in `baby/api/auth.py` use `secrets.compare_digest` to prevent timing side-channel attacks on `api_auth_token` and `api_admin_token`.
+- **Worker Visibility Sanitization**: In-process workers (`worker_tracker`) now share the same host/process metadata and task-scoping protections as durable workers for non-admin callers.
+- **Expanded Secret Redaction**: String-level secret scrubbing in `baby/observability/redaction.py` catches Anthropic (`sk-ant-`) keys in addition to OpenAI, Bearer tokens, and GitHub personal access tokens.
+
 ## Configuration
 `baby/configuration.Settings` (pydantic-settings, reads `.env`, case-insensitive). `validate_settings()` raises on critical misconfig and returns warnings otherwise. Copy `.env.example` to `.env`; secrets (`OPENAI_API_KEY`, API tokens) only come from env.
 
