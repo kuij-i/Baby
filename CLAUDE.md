@@ -80,6 +80,16 @@ FastAPI app that is **read-only except task control**: `ReadOnlyMiddleware` retu
 - **Client library**: `@baby/client` provides `BabyClient` (with `TasksApi`, `WorkersApi`, `ObservabilityApi`), `HttpTransport` with configurable timeout/AbortSignal, engagement header injection, and a structured error hierarchy (`BabyClientError`, `AuthenticationError`, `AuthorizationError`, `NotFoundError`, `ConflictError`, `ValidationError`, `ServerError`). Zero external runtime dependencies; no Python or database imports allowed.
 - **Fail-closed security**: No retries on non-idempotent writes; secret tokens redacted; permissions and engagement boundaries remain strictly enforced server-side.
 
+### End-to-End Integration & Reliability (`tests/test_e2e_integration.py`, Phase 14)
+- **Full Execution Path**: Verified `TypeScript client → /api/v1 HTTP API → SQLite queue → isolated worker processes → permissions & approvals → SQLite results → audit trail → typed response`.
+- **Scenarios verified**:
+  - Scenario A: Task submission (API non-executing) → worker execution → result retrieval → audit & observability.
+  - Scenario B: Authentication rejection (401), IDOR isolation (404), engagement scoping (403 on expansion), admin-only approvals (403 on non-admin), worker metadata sanitization.
+  - Scenario C: Approval pausing (`AWAITING_APPROVAL`), admin denial (`FAILED`, fail-closed), single-use grant execution (`COMPLETED`), replay blocking, operation digest binding.
+  - Scenario D: Cancellation across states (PENDING immediately cancelled, IN_PROGRESS cancelled via watchdog, AWAITING_APPROVAL cancelled, 409 on terminal, late worker writes rejected).
+  - Scenario E: Worker & database failures (API restart preserves live leased tasks, worker crashes fail-closed with "not replayed", expired leases reject writes, concurrency race has single winner, graceful shutdown).
+  - Scenario F: TypeScript client integration (`clients/typescript/tests/integration.test.ts`) against HTTP server verifying full round-trips, typed error mappings, network errors, timeouts, malformed JSON resilience, zero retries on POST.
+
 ## Configuration
 `baby/configuration.Settings` (pydantic-settings, reads `.env`, case-insensitive). `validate_settings()` raises on critical misconfig and returns warnings otherwise. Copy `.env.example` to `.env`; secrets (`OPENAI_API_KEY`, API tokens) only come from env.
 

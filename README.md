@@ -187,6 +187,24 @@ cd clients/typescript
 npm test
 ```
 
+### End-to-End Integration & Reliability (Phase 14)
+
+Baby provides deterministic end-to-end integration and failure recovery guarantees across the full execution pipeline:
+`TypeScript client → HTTP API (/api/v1) → durable SQLite queue → isolated worker processes → permissions & approvals → SQLite results → audit trail → typed response`.
+
+- **Lifecycle Integration**: End-to-end verification of task submission, background execution by isolated worker processes, result persistence, and audit logging.
+- **Fail-Closed Security**: IDOR protection via 404 responses, strict server-side engagement scoping, admin-only approval gating, operation-bound SHA-256 digests, and single-use approval grants with replay prevention.
+- **Worker & Lease Resilience**: Fenced task leases prevent late writes by stale workers; API restarts preserve live worker tasks; process crashes trigger fail-closed task recovery ("not replayed"); concurrent workers race safely without duplicate claims.
+- **TypeScript Client Integration**: Validated against local mock/ephemeral HTTP services covering full round-trips, timeout control, network error translation, zero unapproved retries on non-idempotent state mutations, and malformed response resilience.
+
+```bash
+# Run end-to-end integration tests
+pytest tests/test_e2e_integration.py -v
+
+# Run TypeScript client integration tests
+cd clients/typescript && npm test
+```
+
 ## Implementation Status
 
 - [x] PHASE 0: Repository inspection
@@ -203,6 +221,7 @@ npm test
 - [x] PHASE 11: Architectural boundaries and durable SQLite persistence
 - [x] PHASE 12: Durable worker architecture and process isolation
 - [x] PHASE 13: Typed API contract and TypeScript client
+- [x] PHASE 14: End-to-end integration and reliability
 - [ ] Next: Verification layer, multi-step planning, UI, additional specialist teams
 
 ## Security

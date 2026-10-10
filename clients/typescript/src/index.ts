@@ -11,6 +11,7 @@ export {
   AuthorizationError,
   NotFoundError,
   ConflictError,
+  ValidationError,
   ValidationError as ClientValidationError,
   ServerError,
   type ApiErrorDetails,
