@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "pretest": "npm run build",
     "test": "node --test --experimental-strip-types tests/**/*.test.ts",
     "generate-types": "python ../../scripts/generate_ts_types.py"
   },
@@ -19,5 +20,8 @@
   "license": "MIT",
   "engines": {
     "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3"
   }
 }

@@ -102,9 +102,21 @@ class TestOpenApiContract:
         assert "APIKeyHeader" in security_schemes
 
     def test_openapi_export_matches_generated_definitions(self):
-        exported = export_openapi_schema(output_path="docs/openapi.json")
+        exported = export_openapi_schema()
         assert "paths" in exported
         assert len(exported["paths"]) >= 28
+
+    def test_committed_contract_files_are_up_to_date(self):
+        """docs/openapi.json and the TypeScript types must match the generated contract (read-only check)."""
+        import importlib.util
+
+        script = Path(__file__).resolve().parent.parent / "scripts" / "generate_ts_types.py"
+        spec = importlib.util.spec_from_file_location("generate_ts_types", script)
+        assert spec is not None and spec.loader is not None
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        stale = [str(p) for p in generator.stale_contract_files()]
+        assert stale == [], f"Regenerate with `python scripts/generate_ts_types.py`: {stale}"
 
 
 # ============================================================================

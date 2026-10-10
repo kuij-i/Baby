@@ -123,7 +123,7 @@ Baby is designed for local, self-contained deployment with zero external broker 
 
 ### System Prerequisites
 - **Python**: 3.10, 3.11, or 3.12 (standard library includes `sqlite3`)
-- **Node.js** (Optional, for TypeScript client): Node >= 20.0 and npm >= 9.0
+- **Node.js** (Optional, for TypeScript client): Node >= 20.0 and npm >= 9.0 to use it; Node >= 22.6 to run its tests
 - **Operating Systems Supported**: Windows (10/11/Server), Linux (Ubuntu, Debian, Fedora, Arch), macOS (12+)
 - **External Dependencies**: None required (No Docker, Redis, Celery, PostgreSQL, or cloud infrastructure needed)
 
@@ -411,8 +411,12 @@ Baby exposes a versioned, machine-consumable API contract (`/api/v1/*`) governed
 # Regenerate OpenAPI schema and TypeScript definitions
 python scripts/generate_ts_types.py
 
-# Build and test TypeScript client
+# Verify the committed contract is up to date (CI runs this)
+python scripts/generate_ts_types.py --check
+
+# Build and test TypeScript client (Node >= 22.6)
 cd clients/typescript
+npm ci
 npm test
 ```
 
@@ -431,7 +435,7 @@ Baby provides deterministic end-to-end integration and failure recovery guarante
 pytest tests/test_e2e_integration.py -v
 
 # Run TypeScript client integration tests
-cd clients/typescript && npm test
+cd clients/typescript && npm ci && npm test
 ```
 
 ## Implementation Status
