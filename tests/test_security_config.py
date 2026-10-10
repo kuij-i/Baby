@@ -6,6 +6,8 @@ Covers:
 - Constant-time byte comparison: non-ASCII or malformed credentials yield 401, never 500.
 - Explicit development mode: disabling authentication requires development_mode=True;
   api_require_auth=False on its own keeps authentication enforced.
+- Coding repository root validation before coding tools are enabled (worker bootstrap and
+  supervisor): missing, invalid or unsafe roots (containing Baby's database or .env) fail.
 """
 
 import secrets
@@ -15,9 +17,15 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from baby.agents import agent_registry
 from baby.api.app import app
 from baby.configuration import MIN_API_TOKEN_LENGTH, Settings, api_token_problem, settings, validate_settings
+from baby.core import PermissionCategory, PermissionLevel
 from baby.errors import ConfigurationError
+from baby.permissions import permission_manager
+from baby.tools.coding.path_resolver import validate_coding_repo_root
+from baby.workers.bootstrap import default_bootstrap
+from baby.workers.supervisor import WorkerSupervisor
 
 OPERATOR_TOKEN = secrets.token_hex(24)
 ADMIN_TOKEN = secrets.token_hex(24)
@@ -251,3 +259,161 @@ class TestDevelopmentMode:
     def test_explicit_development_mode_still_allows_local_unauthenticated_use(self):
         with patch.multiple(settings, api_require_auth=False, development_mode=True):
             assert TestClient(app).get("/api/v1/tasks").status_code == 200
+
+
+# ============================================================================
+# D. Coding repository root validation
+# ============================================================================
+
+
+@pytest.fixture
+def layout(tmp_path: Path):
+    """Baby's data in tmp/baby (db + .env); a separate project in tmp/project."""
+    baby_home = tmp_path / "baby"
+    baby_home.mkdir()
+    (baby_home / ".env").write_text("API_ADMIN_TOKEN=not-a-real-secret\n", encoding="utf-8")
+    project = tmp_path / "project"
+    project.mkdir()
+    return {
+        "root": tmp_path,
+        "project": project,
+        "db": str(baby_home / "baby.db"),
+        "env": str(baby_home / ".env"),
+    }
+
+
+class TestCodingRepoRootValidation:
+    def _validate(self, layout, repo_root):
+        return validate_coding_repo_root(repo_root=repo_root, database_path=layout["db"], env_file=layout["env"])
+
+    def test_separate_project_directory_is_accepted(self, layout):
+        assert self._validate(layout, str(layout["project"])) == layout["project"].resolve()
+
+    def test_project_with_its_own_env_file_is_accepted(self, layout):
+        (layout["project"] / ".env").write_text("PROJECT_SETTING=1\n", encoding="utf-8")
+        assert self._validate(layout, str(layout["project"])) == layout["project"].resolve()
+
+    def test_missing_root_is_rejected(self, layout):
+        with patch.object(settings, "coding_repo_root", None):
+            with pytest.raises(ConfigurationError, match="not configured"):
+                self._validate(layout, None)
+
+    def test_nonexistent_root_is_rejected(self, layout):
+        with pytest.raises(ConfigurationError, match="does not exist"):
+            self._validate(layout, str(layout["root"] / "nope"))
+
+    def test_file_root_is_rejected(self, layout):
+        file_root = layout["project"] / "file.txt"
+        file_root.write_text("x", encoding="utf-8")
+        with pytest.raises(ConfigurationError, match="not a directory"):
+            self._validate(layout, str(file_root))
+
+    def test_root_containing_baby_database_is_rejected(self, layout):
+        with pytest.raises(ConfigurationError, match="database"):
+            validate_coding_repo_root(
+                repo_root=str(layout["root"]), database_path=layout["db"], env_file=str(layout["project"] / ".env")
+            )
+
+    def test_root_containing_baby_env_file_is_rejected(self, layout):
+        with pytest.raises(ConfigurationError, match=r"\.env file"):
+            validate_coding_repo_root(
+                repo_root=str(layout["root"]), database_path=str(layout["project"] / "x.db"), env_file=layout["env"]
+            )
+
+    def test_root_equal_to_baby_home_is_rejected(self, layout):
+        with pytest.raises(ConfigurationError, match="contains Baby's"):
+            self._validate(layout, str(Path(layout["db"]).parent))
+
+    def test_symlinked_root_is_resolved_before_checking(self, layout):
+        link = layout["project"] / "baby-link"
+        try:
+            link.symlink_to(Path(layout["db"]).parent, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported")
+        with pytest.raises(ConfigurationError, match="contains Baby's"):
+            self._validate(layout, str(link))
+
+    def test_root_inside_git_directory_is_rejected(self, layout):
+        git_dir = layout["project"] / ".git" / "objects"
+        git_dir.mkdir(parents=True)
+        with pytest.raises(ConfigurationError, match=r"\.git"):
+            self._validate(layout, str(git_dir))
+
+    def test_default_env_file_is_resolved_against_working_directory(self, layout, monkeypatch):
+        monkeypatch.chdir(Path(layout["env"]).parent)
+        with pytest.raises(ConfigurationError, match=r"\.env file"):
+            validate_coding_repo_root(repo_root=str(Path(layout["env"]).parent), database_path="")
+
+    def test_error_message_does_not_leak_env_contents(self, layout):
+        with pytest.raises(ConfigurationError) as exc_info:
+            self._validate(layout, str(Path(layout["env"]).parent))
+        assert "not-a-real-secret" not in str(exc_info.value)
+
+
+class TestWorkerStartupSandboxSafety:
+    @pytest.fixture(autouse=True)
+    def _isolate_registries(self):
+        agent_registry.clear()
+        permission_manager.clear()
+        yield
+        agent_registry.clear()
+        permission_manager.clear()
+
+    def test_default_bootstrap_refuses_missing_root_and_registers_nothing(self):
+        with patch.object(settings, "coding_repo_root", None):
+            with pytest.raises(ConfigurationError, match="not configured"):
+                default_bootstrap()
+        assert agent_registry.list_agents() == []
+        assert permission_manager.get_agent_permissions("coding-agent") == []
+
+    def test_default_bootstrap_refuses_root_containing_database(self, tmp_path: Path):
+        with patch.object(settings, "coding_repo_root", str(tmp_path)):
+            with patch("baby.tools.coding.path_resolver._default_database_path", return_value=str(tmp_path / "b.db")):
+                with pytest.raises(ConfigurationError, match="database"):
+                    default_bootstrap()
+        assert agent_registry.list_agents() == []
+
+    def test_default_bootstrap_with_valid_root_keeps_permission_boundaries(self, tmp_path: Path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        with patch.object(settings, "coding_repo_root", str(repo)):
+            with patch("baby.tools.coding.path_resolver._default_database_path", return_value=str(tmp_path / "b.db")):
+                default_bootstrap()
+        perms = {p.category: p.level for p in permission_manager.get_agent_permissions("coding-agent")}
+        assert perms == {
+            PermissionCategory.LOCAL_READ: PermissionLevel.ALLOW,
+            PermissionCategory.LOCAL_WRITE: PermissionLevel.APPROVAL_REQUIRED,
+        }
+        agent = agent_registry.get("coding-agent")
+        assert {name: tool._repo_root for name, tool in agent.tools.items()} == {
+            name: str(repo.resolve()) for name in ("list_files", "read_file", "write_file")
+        }
+
+    @pytest.mark.parametrize("unsafe", ["missing", "contains_db"])
+    def test_supervisor_fails_before_spawning_workers(self, tmp_path: Path, unsafe):
+        root = None if unsafe == "missing" else str(tmp_path)
+        supervisor = WorkerSupervisor(worker_count=1, database_url=f"sqlite:///{tmp_path / 'baby.db'}")
+        with patch.object(settings, "coding_repo_root", root):
+            with pytest.raises(ConfigurationError):
+                supervisor.start()
+        assert supervisor.workers == []
+
+    def test_custom_bootstrap_is_not_subject_to_coding_root_check(self, tmp_path: Path):
+        supervisor = WorkerSupervisor(
+            worker_count=0,
+            database_url=f"sqlite:///{tmp_path / 'baby.db'}",
+            bootstrap="tests.worker_helpers:bootstrap_scripted_agent",
+        )
+        with patch.object(settings, "coding_repo_root", None):
+            with patch("baby.workers.supervisor.WorkerRecovery"):
+                with patch("baby.persistence.database.db_manager.init_schema"):
+                    supervisor.start()
+        assert supervisor.workers == []
+
+    def test_worker_cli_run_exits_with_config_error(self, capsys: pytest.CaptureFixture):
+        from baby.workers.__main__ import main
+
+        with patch.object(settings, "coding_repo_root", None):
+            with patch("baby.logging.configure_logging"), patch("signal.signal"):
+                assert main(["run", "--count", "1"]) == 2
+        assert "Coding repository root is not configured" in capsys.readouterr().err

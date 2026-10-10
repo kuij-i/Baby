@@ -5,6 +5,11 @@ bootstrap populates them from code, never from task data. The default bootstrap 
 only the CodingAgent with exactly its declared permissions (LOCAL_READ = ALLOW,
 LOCAL_WRITE = APPROVAL_REQUIRED). No financial/trading, command execution, network or
 secret permissions are granted, so any tool requiring them is denied by the executor.
+
+``CODING_REPO_ROOT`` is validated before the CodingAgent is registered: a missing, invalid
+or unsafe root (one containing Baby's database or .env) raises ``ConfigurationError``, so
+the worker refuses to start (config exit code, not restarted) instead of running tasks
+with broken or over-broad coding tools.
 """
 
 import importlib
@@ -16,16 +21,17 @@ DEFAULT_BOOTSTRAP = "baby.workers.bootstrap:default_bootstrap"
 
 
 def default_bootstrap() -> None:
-    """Register the CodingAgent (bounded to ``settings.coding_repo_root``) and its permissions."""
+    """Register the CodingAgent (bounded to a validated ``settings.coding_repo_root``) and its permissions."""
     from baby.agents import agent_registry
     from baby.agents.coding import CodingAgent, create_default_coding_spec
-    from baby.configuration import settings
     from baby.permissions import permission_manager
+    from baby.tools.coding.path_resolver import validate_coding_repo_root
 
+    repo_root = validate_coding_repo_root()
     spec = create_default_coding_spec()
     agent_id = str(spec.id)
     if agent_id not in {str(a.spec.id) for a in agent_registry.list_agents()}:
-        agent_registry.register(CodingAgent(spec=spec, repo_root=settings.coding_repo_root))
+        agent_registry.register(CodingAgent(spec=spec, repo_root=str(repo_root)))
     for permission in spec.permissions:
         permission_manager.revoke_permission(agent_id, permission.category)
         permission_manager.grant_permission(agent_id, permission)

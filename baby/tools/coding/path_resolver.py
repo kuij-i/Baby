@@ -7,6 +7,7 @@ Defends against:
 - Symlink escapes
 - Access to .git internals
 - Unconfigured repository root (fails closed)
+- Repository roots that would expose Baby's own database or .env secrets
 """
 
 from pathlib import Path
@@ -45,6 +46,72 @@ def get_repo_root(repo_root: Optional[str] = None) -> Path:
         raise ConfigurationError(f"Configured repository root is not a directory: {root_path}")
 
     return root_path
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _default_database_path() -> Optional[str]:
+    from baby.persistence.database import db_manager
+
+    return None if db_manager.is_memory else db_manager.db_path
+
+
+def _default_env_file() -> Optional[str]:
+    from baby.configuration import Settings
+
+    env_file = Settings.model_config.get("env_file")
+    return str(env_file) if isinstance(env_file, (str, Path)) else None
+
+
+def validate_coding_repo_root(
+    repo_root: Optional[str] = None,
+    database_path: Optional[str] = None,
+    env_file: Optional[str] = None,
+) -> Path:
+    """Validate the coding repository root before coding tools are enabled.
+
+    The root must be configured and be an existing directory (see ``get_repo_root``). It must
+    not lie inside a ``.git`` directory, and must not contain Baby's SQLite database (which
+    holds tasks, approvals and audit records) or Baby's ``.env`` file (which holds secrets):
+    ``LOCAL_READ`` is allowed without approval, so anything under the root is readable by
+    the agent. A root beside Baby's data, or a project that has its own ``.env``, is fine.
+
+    Args:
+        repo_root: Root to validate. Defaults to ``settings.coding_repo_root``.
+        database_path: Baby's database file. Defaults to the configured ``db_manager`` path.
+        env_file: Baby's dotenv file. Defaults to the Settings ``env_file`` (``.env`` in the
+            working directory). Relative paths resolve against the working directory.
+
+    Returns:
+        The canonical, resolved repository root.
+
+    Raises:
+        ConfigurationError: If the root is unset, missing, not a directory, or unsafe.
+    """
+    root = get_repo_root(repo_root)
+    if any(part.lower() == ".git" for part in root.parts):
+        raise ConfigurationError(f"Coding repository root must not be inside a .git directory: {root}")
+
+    protected = (
+        ("database", database_path if database_path is not None else _default_database_path()),
+        (".env file", env_file if env_file is not None else _default_env_file()),
+    )
+    for label, raw in protected:
+        if not raw or raw == ":memory:":
+            continue
+        path = Path(raw).expanduser().resolve()
+        if _is_within(path, root):
+            raise ConfigurationError(
+                f"Coding repository root {root} contains Baby's {label} ({path}); coding tools could read it. "
+                "Set CODING_REPO_ROOT to a project directory that does not contain Baby's database or .env file."
+            )
+    return root
 
 
 def resolve_safe_path(

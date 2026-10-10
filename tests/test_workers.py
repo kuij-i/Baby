@@ -1115,7 +1115,14 @@ class TestSecurity:
         assert queue.renew(task_id, intruder, fence).held is False
         assert _status(task_id) == TaskStatus.IN_PROGRESS
 
-    def test_default_bootstrap_grants_only_declared_coding_permissions(self):
+    @pytest.fixture
+    def coding_root(self, tmp_path: Path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        with patch.object(settings, "coding_repo_root", str(repo)):
+            yield repo
+
+    def test_default_bootstrap_grants_only_declared_coding_permissions(self, coding_root):
         default_bootstrap()
         default_bootstrap()  # idempotent
         perms = {p.category: p.level for p in permission_manager.get_agent_permissions("coding-agent")}
@@ -1124,7 +1131,7 @@ class TestSecurity:
             PermissionCategory.LOCAL_WRITE: PermissionLevel.APPROVAL_REQUIRED,
         }
 
-    async def test_trading_execution_stays_blocked_in_workers(self):
+    async def test_trading_execution_stays_blocked_in_workers(self, coding_root):
         default_bootstrap()
         tool = _FinancialTool()
         with pytest.raises(PermissionDeniedError):
