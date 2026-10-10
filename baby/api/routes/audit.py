@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 
 from baby.api.auth import AuthenticatedCaller, get_current_caller
+from baby.api.schemas import AuditEventView
 from baby.audit import audit_log
 from baby.core import AgentId, AuditEventType, TaskId
 from baby.observability.redaction import redact_sensitive_data
@@ -14,7 +15,7 @@ from baby.observability.redaction import redact_sensitive_data
 router = APIRouter(tags=["Audit"])
 
 
-@router.get("/audit", response_model=List[Dict[str, Any]])
+@router.get("/audit", response_model=List[AuditEventView])
 def list_audit_events(
     task_id: Optional[UUID] = Query(None),
     agent_id: Optional[str] = Query(None),

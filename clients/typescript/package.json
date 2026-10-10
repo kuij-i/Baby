@@ -1,0 +1,23 @@
+{
+  "name": "@baby/client",
+  "version": "0.1.0",
+  "description": "Typed TypeScript API client for the BABY AI control center",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test --experimental-strip-types tests/**/*.test.ts",
+    "generate-types": "python ../../scripts/generate_ts_types.py"
+  },
+  "keywords": [
+    "baby",
+    "api-client",
+    "typescript"
+  ],
+  "author": "kuij-i",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

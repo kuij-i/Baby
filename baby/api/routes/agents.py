@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from baby.agents import agent_registry
 from baby.api.auth import AuthenticatedCaller, get_current_caller
+from baby.api.schemas import AgentView
 from baby.observability.redaction import redact_sensitive_data
 
 router = APIRouter(tags=["Agents"])
@@ -28,7 +29,7 @@ def _agent_to_view(agent: Any) -> Dict[str, Any]:
     }
 
 
-@router.get("/agents", response_model=List[Dict[str, Any]])
+@router.get("/agents", response_model=List[AgentView])
 def list_agents(
     caller: AuthenticatedCaller = Depends(get_current_caller),
 ) -> List[Dict[str, Any]]:
@@ -38,7 +39,7 @@ def list_agents(
     return cast(List[Dict[str, Any]], redact_sensitive_data(views))
 
 
-@router.get("/agents/{agent_id}", response_model=Dict[str, Any])
+@router.get("/agents/{agent_id}", response_model=AgentView)
 def get_agent(
     agent_id: str,
     caller: AuthenticatedCaller = Depends(get_current_caller),

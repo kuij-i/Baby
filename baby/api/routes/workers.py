@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, cast
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from baby.api.auth import AuthenticatedCaller, get_current_caller
+from baby.api.schemas import WorkerView
 from baby.core import WorkerInfo, WorkerStatus
 from baby.logging import get_logger
 from baby.observability.redaction import redact_sensitive_data
@@ -48,7 +49,7 @@ def _durable_view(worker: WorkerInfo, caller: AuthenticatedCaller) -> Dict[str, 
     return data
 
 
-@router.get("/workers", response_model=List[dict])
+@router.get("/workers", response_model=List[WorkerView])
 def list_workers(
     status_filter: Optional[WorkerStatus] = Query(None, alias="status"),
     caller: AuthenticatedCaller = Depends(get_current_caller),
@@ -60,7 +61,7 @@ def list_workers(
     return cast(List[Dict[str, Any]], [redact_sensitive_data(w) for w in workers])
 
 
-@router.get("/workers/{worker_id}", response_model=dict)
+@router.get("/workers/{worker_id}", response_model=WorkerView)
 def get_worker(
     worker_id: str,
     caller: AuthenticatedCaller = Depends(get_current_caller),

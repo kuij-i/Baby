@@ -169,6 +169,24 @@ mypy baby
 isort baby tests
 ```
 
+### Typed API Contract & TypeScript Client (Phase 13)
+
+Baby exposes a versioned, machine-consumable API contract (`/api/v1/*`) governed by an OpenAPI 3.1.0 specification (`docs/openapi.json`). A standalone, zero-runtime-dependency TypeScript client package (`@baby/client` in `clients/typescript/`) is provided for browser, desktop, and Node.js consumers:
+
+- **Authoritative Backend**: Python FastAPI remains the sole backend, persistence, orchestration, and worker layer.
+- **Contract Source of Truth**: `docs/openapi.json` generated directly from FastAPI wire models (`baby/api/schemas.py`).
+- **Deterministic Generation**: `python scripts/generate_ts_types.py` generates `clients/typescript/src/types.ts` with zero external npm build dependencies.
+- **Strict Client Layer**: Complete typed client (`BabyClient`, `TasksApi`, `WorkersApi`, `ObservabilityApi`) with timeout control, engagement scoping, and structured error hierarchies. Zero Python/database leakage.
+
+```bash
+# Regenerate OpenAPI schema and TypeScript definitions
+python scripts/generate_ts_types.py
+
+# Build and test TypeScript client
+cd clients/typescript
+npm test
+```
+
 ## Implementation Status
 
 - [x] PHASE 0: Repository inspection
@@ -184,6 +202,7 @@ isort baby tests
 - [x] PHASE 10: Production reliability and lifecycle hardening
 - [x] PHASE 11: Architectural boundaries and durable SQLite persistence
 - [x] PHASE 12: Durable worker architecture and process isolation
+- [x] PHASE 13: Typed API contract and TypeScript client
 - [ ] Next: Verification layer, multi-step planning, UI, additional specialist teams
 
 ## Security

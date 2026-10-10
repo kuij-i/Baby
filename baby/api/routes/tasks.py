@@ -18,6 +18,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from baby.api.auth import AuthenticatedCaller, get_current_caller
+from baby.api.schemas import (
+    ApprovalDecisionResponse,
+    TaskCancelResponse,
+    TaskSubmitResponse,
+    TaskView,
+)
 from baby.audit import audit_log
 from baby.core import AuditEventType, Task, TaskId, TaskStatus
 from baby.errors import InvalidStateTransitionError, TaskNotFoundError
@@ -27,7 +33,7 @@ from baby.observability.tasks import task_tracker
 router = APIRouter(tags=["Tasks"])
 
 
-@router.get("/tasks", response_model=List[dict])
+@router.get("/tasks", response_model=List[TaskView])
 def list_tasks(
     status_filter: Optional[TaskStatus] = Query(None, alias="status"),
     engagement_id: Optional[str] = Query(None, alias="engagement_id"),
@@ -61,7 +67,7 @@ def list_tasks(
     return [cast(Dict[str, Any], redact_sensitive_data(r.model_dump())) for r in records]
 
 
-@router.get("/tasks/{task_id}", response_model=dict)
+@router.get("/tasks/{task_id}", response_model=TaskView)
 def get_task(
     task_id: UUID,
     caller: AuthenticatedCaller = Depends(get_current_caller),
@@ -130,7 +136,7 @@ def _get_scoped_task(task_id: UUID, caller: AuthenticatedCaller):  # type: ignor
     return record
 
 
-@router.post("/tasks/submit", status_code=status.HTTP_202_ACCEPTED, response_model=dict)
+@router.post("/tasks/submit", status_code=status.HTTP_202_ACCEPTED, response_model=TaskSubmitResponse)
 def submit_task(
     body: TaskSubmission,
     x_engagement_id: Optional[str] = Header(None, alias="X-Engagement-ID"),
@@ -159,7 +165,7 @@ def submit_task(
     return {"task_id": str(record.task_id), "status": record.status.value, "engagement_id": effective}
 
 
-@router.post("/tasks/{task_id}/cancel", response_model=dict)
+@router.post("/tasks/{task_id}/cancel", response_model=TaskCancelResponse)
 def cancel_task(
     task_id: UUID,
     caller: AuthenticatedCaller = Depends(get_current_caller),
@@ -185,7 +191,7 @@ def cancel_task(
     }
 
 
-@router.post("/tasks/{task_id}/approvals/{request_id}", response_model=dict)
+@router.post("/tasks/{task_id}/approvals/{request_id}", response_model=ApprovalDecisionResponse)
 def decide_approval(
     task_id: UUID,
     request_id: UUID,

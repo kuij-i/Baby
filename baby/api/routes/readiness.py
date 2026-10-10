@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Response, status
 
+from baby.api.schemas import ReadinessResponse
 from baby.configuration import settings, validate_settings
 from baby.observability.health import HealthStatus, health_checker
 from baby.observability.workers import worker_tracker
@@ -78,8 +79,8 @@ def _check_system_readiness() -> tuple[bool, List[str], Dict[str, Any]]:
     return is_ready, issues, details
 
 
-@router.get("/ready")
-@router.get("/readiness")
+@router.get("/ready", response_model=ReadinessResponse)
+@router.get("/readiness", response_model=ReadinessResponse)
 def get_readiness(response: Response) -> Dict[str, Any]:
     """Readiness check: confirms Baby can safely accept and process work.
 

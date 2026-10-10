@@ -21,7 +21,7 @@ from enum import Enum
 from typing import Optional, Set
 
 from fastapi import Depends, Header, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from baby.configuration import settings
 from baby.logging import get_logger
@@ -29,6 +29,8 @@ from baby.logging import get_logger
 logger = get_logger(__name__)
 
 security_bearer = HTTPBearer(auto_error=False)
+# Declared (rather than read as a bare Header) so the OpenAPI document advertises X-API-Key.
+security_api_key = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 class Role(str, Enum):
@@ -114,7 +116,7 @@ def _parse_operator_engagements() -> Set[str]:
 
 def get_current_caller(
     auth_header: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
-    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    x_api_key: Optional[str] = Depends(security_api_key),
     x_engagement_id: Optional[str] = Header(None, alias="X-Engagement-ID"),
 ) -> AuthenticatedCaller:
     """Validate credentials and construct caller principal.

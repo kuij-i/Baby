@@ -18,7 +18,8 @@ mypy baby                               # type check (CI)
 black baby tests && isort baby tests    # format (120-char lines; not enforced in CI)
 uvicorn baby.api.app:app --reload       # run the observability API (never executes tasks)
 python -m baby.workers run [--count N]  # run supervised worker processes (status | recover also available)
-python -m baby.api.openapi              # export OpenAPI schema (writes docs/openapi.json)
+python scripts/generate_ts_types.py     # export OpenAPI schema & generate clients/typescript/src/types.ts
+cd clients/typescript && npm test       # compile & run TypeScript client tests
 ```
 
 CI (`.github/workflows/ci.yml`) runs ruff → mypy → pytest on Python 3.10/3.11/3.12 for pushes/PRs to `main`. Markers `unit`, `integration`, `slow` are registered; unregistered markers fail under `--strict-markers`. Prefer `python -m pytest` so tests run with the interpreter that has the package installed.
@@ -71,7 +72,13 @@ Most subsystems are module-level singletons imported directly: `settings`, `audi
 `providers/base.ModelProvider` abstraction + `provider_registry`; `OpenAIProvider` is OpenAI-compatible (`openai_base_url` allows NVIDIA/local endpoints). `is_available()` must return False without credentials.
 
 ### Observability API (`baby/api/`)
-FastAPI app that is **read-only except task control**: `ReadOnlyMiddleware` returns 405 for non-GET/HEAD/OPTIONS unless the request matches `TASK_CONTROL_ENDPOINTS` — `POST /tasks/submit` (operator/admin; engagement resolved server-side), `POST /tasks/{id}/cancel` (engagement-scoped), `POST /tasks/{id}/approvals/{request_id}` (admin only). These only write durable task state; the API never executes tasks (`POST /tasks` itself stays 405). `/workers` merges in-process and durable workers; non-admins get no host/pid metadata and see `current_task_id` only for their own engagement. Every router is mounted twice — at the root and under `/api/v1` — so new routes must be added to both. Auth (`api/auth.py`): bearer tokens (`api_auth_token` = operator, `api_admin_token` = admin). The `X-Engagement-ID` header only *selects* among engagements configured server-side in `operator_engagements`; it must never expand access. `api_require_auth=False` is dev-only (everyone becomes admin). `api/openapi.export_openapi_schema` produces the contract for a future TypeScript client.
+FastAPI app that is **read-only except task control**: `ReadOnlyMiddleware` returns 405 for non-GET/HEAD/OPTIONS unless the request matches `TASK_CONTROL_ENDPOINTS` — `POST /tasks/submit` (operator/admin; engagement resolved server-side), `POST /tasks/{id}/cancel` (engagement-scoped), `POST /tasks/{id}/approvals/{request_id}` (admin only). These only write durable task state; the API never executes tasks (`POST /tasks` itself stays 405). `/workers` merges in-process and durable workers; non-admins get no host/pid metadata and see `current_task_id` only for their own engagement. Every router is mounted twice — at the root and under `/api/v1` — so new routes must be added to both. Auth (`api/auth.py`): bearer tokens (`api_auth_token` = operator, `api_admin_token` = admin). The `X-Engagement-ID` header only *selects* among engagements configured server-side in `operator_engagements`; it must never expand access. `api_require_auth=False` is dev-only (everyone becomes admin). `api/openapi.export_openapi_schema` produces the contract for the TypeScript client.
+
+### Typed API Contract & TypeScript Client (`clients/typescript/`, Phase 13)
+- **Authoritative backend & contract**: FastAPI generates OpenAPI 3.1.0 (`docs/openapi.json`). Python models in `baby/api/schemas.py` define wire shapes (`TaskView`, `WorkerView`, etc.) separated from domain internals.
+- **Deterministic TypeScript generation**: `scripts/generate_ts_types.py` uses pure standard-library Python to parse `docs/openapi.json` into typed interfaces and enums in `clients/typescript/src/types.ts`.
+- **Client library**: `@baby/client` provides `BabyClient` (with `TasksApi`, `WorkersApi`, `ObservabilityApi`), `HttpTransport` with configurable timeout/AbortSignal, engagement header injection, and a structured error hierarchy (`BabyClientError`, `AuthenticationError`, `AuthorizationError`, `NotFoundError`, `ConflictError`, `ValidationError`, `ServerError`). Zero external runtime dependencies; no Python or database imports allowed.
+- **Fail-closed security**: No retries on non-idempotent writes; secret tokens redacted; permissions and engagement boundaries remain strictly enforced server-side.
 
 ## Configuration
 `baby/configuration.Settings` (pydantic-settings, reads `.env`, case-insensitive). `validate_settings()` raises on critical misconfig and returns warnings otherwise. Copy `.env.example` to `.env`; secrets (`OPENAI_API_KEY`, API tokens) only come from env.
