@@ -89,6 +89,11 @@ FastAPI app that is **read-only except task control**: `ReadOnlyMiddleware` retu
   - Scenario D: Cancellation across states (PENDING immediately cancelled, IN_PROGRESS cancelled via watchdog, AWAITING_APPROVAL cancelled, 409 on terminal, late worker writes rejected).
   - Scenario E: Worker & database failures (API restart preserves live leased tasks, worker crashes fail-closed with "not replayed", expired leases reject writes, concurrency race has single winner, graceful shutdown).
   - Scenario F: TypeScript client integration (`clients/typescript/tests/integration.test.ts`) against HTTP server verifying full round-trips, typed error mappings, network errors, timeouts, malformed JSON resilience, zero retries on POST.
+### Installation & Deployment Experience (Phase 15)
+- **Local & Self-Contained**: Baby runs entirely on local SQLite (WAL mode) with no external message broker, background daemon, or cloud service dependencies.
+- **Fail-Closed DB Initialization**: `DatabaseManager` creates directories automatically if writable; uncreatable/unwritable directories fail closed with clear, actionable `ConfigurationError`.
+- **Environment Template**: `.env.example` provides an exhaustive reference covering log levels, auth tokens, model providers, SQLite URLs, worker supervisor tuning, and coding agent sandbox paths.
+- **CLI Utilities**: Supervised worker processes run via `python -m baby.workers run [--count N]`, inspection via `python -m baby.workers status`, and crashed worker recovery via `python -m baby.workers recover`.
 
 ## Configuration
 `baby/configuration.Settings` (pydantic-settings, reads `.env`, case-insensitive). `validate_settings()` raises on critical misconfig and returns warnings otherwise. Copy `.env.example` to `.env`; secrets (`OPENAI_API_KEY`, API tokens) only come from env.

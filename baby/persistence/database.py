@@ -119,20 +119,25 @@ class DatabaseManager:
                                 f"Failed to create database directory {parent_dir}: {exc}"
                             ) from exc
 
-                conn = sqlite3.connect(
-                    self._db_path,
-                    check_same_thread=False,
-                    timeout=10.0,
-                    detect_types=sqlite3.PARSE_DECLTYPES,
-                )
-                conn.row_factory = sqlite3.Row
+                try:
+                    conn = sqlite3.connect(
+                        self._db_path,
+                        check_same_thread=False,
+                        timeout=10.0,
+                        detect_types=sqlite3.PARSE_DECLTYPES,
+                    )
+                    conn.row_factory = sqlite3.Row
 
-                # Enable WAL mode and busy timeout for concurrency
-                if not self.is_memory:
-                    conn.execute("PRAGMA journal_mode=WAL;")
-                conn.execute("PRAGMA synchronous=NORMAL;")
-                conn.execute("PRAGMA busy_timeout=5000;")
-                conn.execute("PRAGMA foreign_keys=ON;")
+                    # Enable WAL mode and busy timeout for concurrency
+                    if not self.is_memory:
+                        conn.execute("PRAGMA journal_mode=WAL;")
+                    conn.execute("PRAGMA synchronous=NORMAL;")
+                    conn.execute("PRAGMA busy_timeout=5000;")
+                    conn.execute("PRAGMA foreign_keys=ON;")
+                except (sqlite3.OperationalError, sqlite3.DatabaseError) as exc:
+                    raise ConfigurationError(
+                        f"Failed to initialize SQLite database at '{self._db_path}': {exc}"
+                    ) from exc
 
                 self._conn = conn
                 logger.info(

@@ -117,6 +117,207 @@ tests/                   # Test suite
 .github/                 # CI workflow
 ```
 
+## Installation & Deployment (Phase 15)
+
+Baby is designed for local, self-contained deployment with zero external broker or database daemon dependencies. The single source of truth for task queueing, state transitions, leases, audit logs, and agent memory is local SQLite with Write-Ahead Logging (WAL).
+
+### System Prerequisites
+- **Python**: 3.10, 3.11, or 3.12 (standard library includes `sqlite3`)
+- **Node.js** (Optional, for TypeScript client): Node >= 20.0 and npm >= 9.0
+- **Operating Systems Supported**: Windows (10/11/Server), Linux (Ubuntu, Debian, Fedora, Arch), macOS (12+)
+- **External Dependencies**: None required (No Docker, Redis, Celery, PostgreSQL, or cloud infrastructure needed)
+
+---
+
+### Step-by-Step Installation
+
+#### Option A: Windows (PowerShell)
+
+```powershell
+# 1. Clone repository
+git clone https://github.com/kuij-i/Baby.git
+cd Baby
+
+# 2. Create virtual environment
+python -m venv .venv
+
+# 3. Activate virtual environment
+.\.venv\Scripts\Activate.ps1
+
+# 4. Install Baby and dependencies
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+
+# 5. Configure environment
+Copy-Item .env.example .env
+```
+
+#### Option B: Linux & macOS (bash / zsh)
+
+```bash
+# 1. Clone repository
+git clone https://github.com/kuij-i/Baby.git
+cd Baby
+
+# 2. Create virtual environment
+python3 -m venv .venv
+
+# 3. Activate virtual environment
+source .venv/bin/activate
+
+# 4. Install Baby and dependencies
+python3 -m pip install --upgrade pip
+pip install -e ".[dev]"
+
+# 5. Configure environment
+cp .env.example .env
+```
+
+---
+
+### Configuration & Authentication
+
+Open `.env` in your text editor to configure settings:
+
+1. **Authentication (Mandatory for Production)**:
+   By default, `API_REQUIRE_AUTH=false` is set for rapid local testing. In non-development mode, set `API_REQUIRE_AUTH=true` and generate secure tokens:
+   ```bash
+   python -c "import secrets; print('API_AUTH_TOKEN=' + secrets.token_hex(24))"
+   python -c "import secrets; print('API_ADMIN_TOKEN=' + secrets.token_hex(24))"
+   ```
+2. **Engagements**:
+   Operators are scoped to specific engagement IDs (e.g., `OPERATOR_ENGAGEMENTS=default,engagement-1`). Requests can pass `X-Engagement-ID` to choose an active engagement.
+3. **Database URL**:
+   Defaults to `sqlite:///baby.db`. Parent directories are automatically created on first boot. The database automatically initializes in WAL mode with busy timeout handling.
+
+---
+
+### Starting the Services
+
+Baby strictly isolates API request handling from worker execution. Tasks submitted to the API are recorded durably as `PENDING` in SQLite; worker processes claim and execute them.
+
+#### Mode 1: Split Architecture (Recommended for Production)
+
+Run the API and worker pool in separate terminal windows:
+
+**Terminal 1 — HTTP Observability & Task Submission API:**
+```bash
+# Windows / Linux / macOS
+uvicorn baby.api.app:app --host 127.0.0.1 --port 8000
+```
+
+**Terminal 2 — Isolated Worker Supervisor Pool:**
+```bash
+# Windows / Linux / macOS
+python -m baby.workers run --count 2
+```
+
+#### Mode 2: Unified Process Supervision (Convenient for Dev / Single-Command)
+
+Enable `WORKER_ENABLED=true` in your `.env` or pass via environment variable. The FastAPI lifespan will supervise worker child processes automatically:
+
+```bash
+WORKER_ENABLED=true uvicorn baby.api.app:app --host 127.0.0.1 --port 8000
+```
+
+---
+
+### First-Run Verification Walkthrough
+
+Once running, verify your installation using `curl`:
+
+1. **Check System Health:**
+   ```bash
+   curl -s http://127.0.0.1:8000/api/v1/health
+   # Response: {"status":"healthy","version":"0.1.0","checks":{...}}
+   ```
+
+2. **Check System Readiness:**
+   ```bash
+   curl -s http://127.0.0.1:8000/api/v1/readiness
+   # Response: {"status":"ready","database_connected":true,...}
+   ```
+
+3. **Check Worker Status:**
+   ```bash
+   python -m baby.workers status
+   # Or via API:
+   curl -s http://127.0.0.1:8000/api/v1/workers
+   ```
+
+4. **Submit a Safe Task:**
+   ```bash
+   curl -s -X POST http://127.0.0.1:8000/api/v1/tasks/submit \
+     -H "Content-Type: application/json" \
+     -d '{"description":"Test first-run verification","priority":5}'
+   # Response: {"task_id":"task-...","status":"PENDING",...}
+   ```
+
+5. **Track Task Completion:**
+   ```bash
+   curl -s http://127.0.0.1:8000/api/v1/tasks/<task_id>
+   ```
+
+---
+
+### Graceful Shutdown, Recovery & Backups
+
+#### Graceful Shutdown
+- Press `Ctrl+C` (SIGINT) or send `SIGTERM` to the API or worker process.
+- The supervisor notifies workers, waits up to `WORKER_SHUTDOWN_GRACE_SECONDS` (default 10s) for in-flight tasks to finish or release leases, and exits cleanly.
+
+#### Crash Recovery
+- If a worker process crashes abruptly or is killed (`SIGKILL`), the task is **never replayed** (fail-closed security).
+- To recover orphaned or stale task leases:
+  ```bash
+  python -m baby.workers recover
+  ```
+- Orphaned tasks are moved to `FAILED` with an audit event stating the failure reason.
+
+#### Backup and Restore
+Baby uses SQLite with WAL mode (`baby.db`, `baby.db-wal`, `baby.db-shm`).
+- **Online Backup (Safe while running):**
+  Use SQLite's native online backup API:
+  ```bash
+  sqlite3 baby.db ".backup 'baby-backup.db'"
+  ```
+  Or via Python script:
+  ```python
+  import sqlite3
+  src = sqlite3.connect("baby.db")
+  dst = sqlite3.connect("backup.db")
+  src.backup(dst)
+  src.close()
+  dst.close()
+  ```
+- **Restore:**
+  Stop the API and workers, copy `backup.db` over `baby.db`, and delete leftover `-wal` and `-shm` files before restarting.
+
+---
+
+### Troubleshooting Common First-Run Issues
+
+| Symptom | Cause | Solution |
+|---|---|---|
+| `ConfigurationError: Database directory ... does not exist and could not be created` | Target directory has insufficient OS filesystem permissions or invalid path syntax. | Check `DATABASE_URL` in `.env`. Ensure your user has write permissions to the directory. |
+| `ConfigurationError: Worker stale timeout (...) must be at least 2x heartbeat (...)` | Configuration timing bounds violation. | Ensure `WORKER_STALE_TIMEOUT_SECONDS >= 2 * WORKER_HEARTBEAT_INTERVAL_SECONDS`. |
+| `HTTP 401 Unauthorized` | `API_REQUIRE_AUTH=true` is set, but token was missing or invalid. | Supply `-H "Authorization: Bearer <API_AUTH_TOKEN>"` or set `API_REQUIRE_AUTH=false` for local dev. |
+| `HTTP 403 Forbidden` | Operator attempted admin action (e.g. approval) or used an unpermitted engagement. | Supply the `API_ADMIN_TOKEN` or verify `OPERATOR_ENGAGEMENTS` in `.env`. |
+| `HTTP 405 Method Not Allowed` on `/tasks` | Direct `POST /tasks` is intentionally disabled to prevent bypass of queue. | Submit tasks to `/api/v1/tasks/submit`. |
+| Port 8000 already in use | Another service is using port 8000. | Run with `--port 8080` (or another free port). |
+| `OperationalError: database is locked` | High concurrency without WAL mode. | Baby enforces WAL mode by default; ensure your filesystem supports POSIX locks (avoid remote SMB mounts for the SQLite DB). |
+
+---
+
+### Explicitly Unsupported Features
+
+To prevent architectural drift and security vulnerabilities, the following are explicitly **not supported**:
+- **Live Trading Execution**: Baby is permanently analysis-only. No live broker integrations, API order keys, or automated order placements are permitted.
+- **External Brokers / Distributed Queues**: RabbitMQ, Redis, Celery, and Kafka are not supported; SQLite WAL is the sole coordination channel.
+- **Unrestricted Shell Execution**: Specialist agents execute strictly within repository-bounded filesystems; direct shell access is blocked.
+
+---
+
 ## Development
 
 ### Setup
@@ -222,6 +423,7 @@ cd clients/typescript && npm test
 - [x] PHASE 12: Durable worker architecture and process isolation
 - [x] PHASE 13: Typed API contract and TypeScript client
 - [x] PHASE 14: End-to-end integration and reliability
+- [x] PHASE 15: Installation, deployment & first-run experience
 - [ ] Next: Verification layer, multi-step planning, UI, additional specialist teams
 
 ## Security
