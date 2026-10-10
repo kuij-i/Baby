@@ -35,6 +35,11 @@ class Settings(BaseSettings):
 
     # Security
     enable_approval_workflow: bool = True
+    # Undecided approval requests, and granted-but-unused approvals, expire after this many
+    # seconds; recovery then fails the task closed. 60..2592000 (30 days), default 24h.
+    approval_ttl_seconds: float = 86400.0
+    # A task may pause for approval at most this many times; the next request fails it. 1..20.
+    max_approval_rounds: int = 3
 
     # Coding Subsystem
     coding_repo_root: Optional[str] = None
@@ -136,6 +141,7 @@ def validate_settings(cfg: "Settings") -> list:
         raise ConfigurationError(f"coding_max_file_size_bytes must be >= 1, got {cfg.coding_max_file_size_bytes}")
 
     _validate_worker_settings(cfg)
+    _validate_approval_settings(cfg)
     _validate_api_auth_settings(cfg)
 
     # Persistence backend validation (fail-closed if durable persistence is misconfigured)
@@ -175,6 +181,18 @@ def validate_settings(cfg: "Settings") -> list:
         warnings.append(f"Unrecognized audit_storage_type '{cfg.audit_storage_type}'; expected 'sqlite' or 'in_memory'")
 
     return warnings
+
+
+def _validate_approval_settings(cfg: "Settings") -> None:
+    """Fail closed on approval lifecycle settings outside safe bounds."""
+    from baby.errors import ConfigurationError
+
+    ttl = cfg.approval_ttl_seconds
+    if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not (60 <= ttl <= 2_592_000):
+        raise ConfigurationError(f"approval_ttl_seconds must be between 60 and 2592000, got {ttl!r}")
+    rounds = cfg.max_approval_rounds
+    if isinstance(rounds, bool) or not isinstance(rounds, int) or not (1 <= rounds <= 20):
+        raise ConfigurationError(f"max_approval_rounds must be an integer between 1 and 20, got {rounds!r}")
 
 
 def _validate_api_auth_settings(cfg: "Settings") -> None:

@@ -10,6 +10,8 @@ Rules (all applied inside one ``BEGIN IMMEDIATE`` transaction per pass):
 3. The task behind a revoked lease, if still IN_PROGRESS, moves IN_PROGRESS → FAILED with an
    explicit recovery reason. It is never re-queued and never replayed automatically:
    interrupted work may have performed privileged or side-effecting operations.
+4. An unleased AWAITING_APPROVAL task whose approval request went undecided, or whose grant
+   went unused, for longer than ``approval_ttl_seconds`` moves AWAITING_APPROVAL → FAILED.
 
 Recovery is idempotent and safe to run concurrently from the API, supervisors and workers.
 """
@@ -33,6 +35,7 @@ REASON_LEASE_EXPIRED = "lease_expired"
 REASON_WORKER_STALE = "worker_stale"
 REASON_WORKER_EXITED = "worker_exited"
 REASON_WORKER_STOPPED = "worker_stopped"
+REASON_APPROVAL_EXPIRED = "approval_expired"
 
 
 @dataclass
@@ -42,10 +45,11 @@ class RecoveryReport:
     stale_workers: List[str] = field(default_factory=list)
     failed_tasks: List[TaskRecord] = field(default_factory=list)
     released_leases: int = 0
+    expired_approval_tasks: List[TaskRecord] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
-        return bool(self.stale_workers or self.failed_tasks or self.released_leases)
+        return bool(self.stale_workers or self.failed_tasks or self.released_leases or self.expired_approval_tasks)
 
 
 class WorkerRecovery:
@@ -71,7 +75,7 @@ class WorkerRecovery:
         self._clock = clock
 
     def recover(self, now: Optional[datetime] = None) -> RecoveryReport:
-        """Mark stale workers and revoke expired/orphaned leases (fail closed)."""
+        """Mark stale workers, revoke expired/orphaned leases and expire stale approvals (fail closed)."""
         now = now or self._clock()
         report = RecoveryReport()
         live = [s.value for s in LIVE_WORKER_STATUSES]
@@ -113,8 +117,44 @@ class WorkerRecovery:
             for task_id_str, worker_id, reason in revoked:
                 self._revoke_lease(conn, task_id_str, worker_id, reason, now, report)
 
+            self._expire_approvals(conn, now, report)
+
         self._emit(report)
         return report
+
+    def _expire_approvals(self, conn, now: datetime, report: RecoveryReport) -> None:  # type: ignore[no-untyped-def]
+        from uuid import UUID
+
+        from baby.core import TaskId
+        from baby.permissions.approvals import approval_ttl, expired_approval_reason
+
+        ttl = approval_ttl()
+        rows = conn.execute(
+            """
+            SELECT t.task_id FROM task_records t
+            LEFT JOIN task_leases l ON l.task_id = t.task_id
+            WHERE l.task_id IS NULL AND t.status = ?
+            """,
+            (TaskStatus.AWAITING_APPROVAL.value,),
+        ).fetchall()
+        for row in rows:
+            task_id = TaskId(id=UUID(row["task_id"]))
+            record = self._tasks.read_record(conn, task_id)
+            if record is None:
+                continue
+            reason = expired_approval_reason(record, now, ttl)
+            if reason is None:
+                continue
+            ensure_valid_transition(task_id, record.status, TaskStatus.FAILED)
+            record.status = TaskStatus.FAILED
+            record.error = reason
+            record.updated_at = now
+            record.completed_at = now
+            self._tasks.write_record(conn, record)
+            report.expired_approval_tasks.append(record)
+            metrics_collector.increment_counter("approvals_expired_total")
+            duration_ms = (now - record.created_at).total_seconds() * 1000
+            metrics_collector.record_task_failed(duration_ms, error_type=REASON_APPROVAL_EXPIRED)
 
     def recover_worker(
         self,
@@ -185,3 +225,11 @@ class WorkerRecovery:
             details = {"worker_id": record.assigned_worker_id, "error": record.error, "replayed": False}
             for event in (AuditEventType.TASK_RECOVERED, AuditEventType.TASK_FAILED):
                 audit_log.record(event, task_id=record.task_id, user_id=record.user_id, details=details)
+        for record in report.expired_approval_tasks:
+            logger.warning("Task failed closed: approval expired", task_id=str(record.task_id))
+            audit_log.record(
+                AuditEventType.TASK_FAILED,
+                task_id=record.task_id,
+                user_id=record.user_id,
+                details={"reason": REASON_APPROVAL_EXPIRED, "error": record.error, "replayed": False},
+            )

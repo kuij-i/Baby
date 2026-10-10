@@ -89,3 +89,22 @@ class ProviderRegistry:
 
 # Global provider registry instance
 provider_registry = ProviderRegistry()
+
+
+def register_configured_providers(registry: Optional[ProviderRegistry] = None) -> List[str]:
+    """Register the model providers whose credentials are configured; return their names.
+
+    Today this is the OpenAI-compatible provider (``OPENAI_API_KEY``, optional
+    ``OPENAI_BASE_URL`` and ``DEFAULT_MODEL``). Without credentials nothing is registered
+    and agents fall back to their provider-less behaviour. Idempotent.
+    """
+    from baby.providers.openai_provider import OpenAIProvider
+
+    registry = registry or provider_registry
+    registered: List[str] = []
+    provider = OpenAIProvider()
+    if provider.is_available():
+        if provider.name not in {p.name for p in registry.list_providers()}:
+            registry.register(provider, default=True)
+        registered.append(provider.name)
+    return registered

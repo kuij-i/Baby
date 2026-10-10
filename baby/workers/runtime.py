@@ -341,9 +341,23 @@ class WorkerRuntime:
         if result is None or result.success:
             return self._write(claimed, TaskStatus.COMPLETED, result=result)
 
+        from baby.configuration import settings
         from baby.permissions.approvals import approval_service
 
         if approval_service.has_pending(task_id):
+            # Each resume re-runs the task from the start, so an unbounded series of approval
+            # pauses could keep asking an admin to re-approve; cap it and fail closed.
+            rounds = approval_service.approval_rounds(task_id)
+            if rounds > settings.max_approval_rounds:
+                return self._write(
+                    claimed,
+                    TaskStatus.FAILED,
+                    result=result,
+                    error=(
+                        f"Task needed approval {rounds} times, more than max_approval_rounds "
+                        f"({settings.max_approval_rounds}); failed closed instead of pausing again"
+                    ),
+                )
             return self._write(claimed, TaskStatus.AWAITING_APPROVAL, result=result)
         return self._write(claimed, TaskStatus.FAILED, result=result, error=result.error)
 

@@ -53,6 +53,12 @@ class ApprovalRequiredError(BabyException):
     pass
 
 
+class ApprovalExpiredError(InvalidStateTransitionError):
+    """Approval request or grant outlived ``approval_ttl_seconds``; the task was failed closed."""
+
+    pass
+
+
 class AgentNotFoundError(BabyException):
     """Agent not found."""
 

@@ -459,7 +459,7 @@
           "Tasks"
         ],
         "summary": "Decide Approval",
-        "description": "Approve or deny one pending approval request. Admin role required.\n\nThe decision is bound to the task, its engagement and the exact operation digest\nrecorded in the request; approving lets a worker execute that one operation once.",
+        "description": "Approve or deny one pending approval request. Admin role required.\n\nThe decision is bound to the task, its engagement and the exact operation digest\nrecorded in the request; approving lets a worker execute that one operation once.\nA request older than ``approval_ttl_seconds`` can no longer be decided: the task is\nfailed closed and 409 is returned.",
         "operationId": "decide_approval_tasks__task_id__approvals__request_id__post",
         "security": [
           {
@@ -1468,7 +1468,7 @@
           "Tasks"
         ],
         "summary": "Decide Approval",
-        "description": "Approve or deny one pending approval request. Admin role required.\n\nThe decision is bound to the task, its engagement and the exact operation digest\nrecorded in the request; approving lets a worker execute that one operation once.",
+        "description": "Approve or deny one pending approval request. Admin role required.\n\nThe decision is bound to the task, its engagement and the exact operation digest\nrecorded in the request; approving lets a worker execute that one operation once.\nA request older than ``approval_ttl_seconds`` can no longer be decided: the task is\nfailed closed and 409 is returned.",
         "operationId": "decide_approval_api_v1_tasks__task_id__approvals__request_id__post",
         "security": [
           {

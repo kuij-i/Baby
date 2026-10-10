@@ -26,7 +26,7 @@ from baby.api.schemas import (
 )
 from baby.audit import audit_log
 from baby.core import AuditEventType, Task, TaskId, TaskStatus
-from baby.errors import InvalidStateTransitionError, TaskNotFoundError
+from baby.errors import ApprovalExpiredError, InvalidStateTransitionError, TaskNotFoundError
 from baby.observability.redaction import redact_sensitive_data
 from baby.observability.tasks import task_tracker
 
@@ -202,18 +202,28 @@ def decide_approval(
 
     The decision is bound to the task, its engagement and the exact operation digest
     recorded in the request; approving lets a worker execute that one operation once.
+    A request older than ``approval_ttl_seconds`` can no longer be decided: the task is
+    failed closed and 409 is returned.
     """
     from baby.permissions.approvals import approval_service
 
     if not caller.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required to decide approvals")
-    _get_scoped_task(task_id, caller)
+    scoped = _get_scoped_task(task_id, caller)
     try:
         record = approval_service.decide(
             TaskId(id=task_id), request_id, body.approved, decided_by=caller.caller_id, reason=body.reason
         )
     except TaskNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found")
+    except ApprovalExpiredError as exc:
+        audit_log.record(
+            AuditEventType.TASK_FAILED,
+            task_id=TaskId(id=task_id),
+            user_id=scoped.user_id,
+            details={"request_id": str(request_id), "decided_by": caller.caller_id, "reason": "approval_expired"},
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except InvalidStateTransitionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     audit_log.record(

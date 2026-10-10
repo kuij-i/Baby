@@ -1,6 +1,7 @@
 """Specialist Coding Agent for repository-bounded code operations."""
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from baby.agents.base import Agent
@@ -66,7 +67,7 @@ def create_default_coding_spec(agent_id: str = "coding-agent") -> AgentSpec:
         role="coding",
         capabilities=CODING_AGENT_CAPABILITIES,
         permissions=CODING_AGENT_PERMISSIONS,
-        model="gpt-4",
+        model=settings.default_model,
         enabled=True,
     )
 
@@ -425,12 +426,16 @@ class CodingAgent(Agent):
         )
 
     async def _execute_heuristic(self, context: ExecutionContext) -> AgentResult:
-        """Fallback execution when provider is not configured."""
-        step = context.plan_step
-        desc_lower = step.description.lower()
+        """Fallback execution when no model provider is available.
 
-        # Heuristic dispatch based on step description keyword
-        if "list" in desc_lower or "ls" in desc_lower:
+        Only a request to list files (the word "list" or "ls") can be handled without a model;
+        it runs ``list_files`` through the executor. Anything else fails explicitly: the agent
+        must never report a step as completed when nothing was executed.
+        """
+        step = context.plan_step
+        words = set(re.findall(r"[a-z]+", step.description.lower()))
+
+        if words & {"list", "ls"}:
             tool = self._tools["list_files"]
             tool_args = self._extract_tool_args(step.description)
             res = await tool_executor.execute(
@@ -448,11 +453,16 @@ class CodingAgent(Agent):
                 error=res.error,
             )
 
+        logger.warning("CodingAgent cannot execute step without a model provider", agent_id=self.id)
         return AgentResult(
             step_id=step.step_id,
             agent_id=self.spec.id,
-            success=True,
-            output=f"CodingAgent completed step: {step.description}",
+            success=False,
+            error=(
+                "No model provider is configured (set OPENAI_API_KEY to enable the model-driven "
+                "CodingAgent). Without one only explicit tool steps and 'list files' requests can run; "
+                "nothing was executed for this step."
+            ),
         )
 
     def _get_provider(self) -> Optional[ModelProvider]:
