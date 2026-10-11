@@ -327,6 +327,26 @@ workers only run explicit tool steps and "list files" requests; any other task i
 **FAILED** with `No model provider is configured` — Baby never reports work as completed when
 nothing was executed.
 
+### Idempotent Task Submission
+
+`POST /api/v1/tasks/submit` accepts an optional `Idempotency-Key` header (1–255 visible ASCII
+characters, e.g. a UUID) so clients can retry safely:
+
+- **Scope:** the key is scoped to the authenticated principal (operator, admin or local-dev
+  caller) **and** the resolved engagement. The same key used by another principal or in another
+  engagement is unrelated: it never returns someone else's task.
+- **Same key, same request** (same title, description, priority and engagement): the original
+  task is returned with `"replayed": true` and an `Idempotent-Replayed: true` header; no
+  duplicate task is created. `status` is the task's current status.
+- **Same key, different request:** `409 Conflict`; nothing is created.
+- **Invalid key** (empty, too long, spaces or non-ASCII): `422`.
+- **Guarantees:** the task and its key are written in one SQLite transaction, so concurrent
+  retries (from any process) create exactly one task, a failed request never reserves the key,
+  and replays work across API and worker restarts.
+- **Retention:** keys are kept as long as the task record exists (there is no expiry). Only a
+  SHA-256 of the key and of the request fields is stored.
+- Requests without the header behave exactly as before.
+
 ### Approval Lifecycle
 
 - High-risk operations (file writes, priority ≥ 8 plan steps) pause the task in `AWAITING_APPROVAL`
