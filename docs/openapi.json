@@ -390,6 +390,9 @@
               }
             }
           },
+          "503": {
+            "description": "The task was persisted but its TASK_CREATED audit event could not be written. Retrying with the same Idempotency-Key returns the same task and records the event once."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1416,6 +1419,9 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "The task was persisted but its TASK_CREATED audit event could not be written. Retrying with the same Idempotency-Key returns the same task and records the event once."
           },
           "422": {
             "description": "Validation Error",
