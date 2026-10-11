@@ -391,3 +391,112 @@ test("WorkersApi and ObservabilityApi execute correct endpoints", async () => {
   await client.observability.getAgent("agent-1");
   assert.equal(requestedUrls[7], "http://localhost:8000/api/v1/agents/agent-1");
 });
+
+// ---------------------------------------------------------------------------
+// TasksApi.submit: optional Idempotency-Key
+// ---------------------------------------------------------------------------
+
+interface CapturedSubmit {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  rawBody: string;
+}
+
+function captureSubmits(respond: () => Response): { calls: CapturedSubmit[]; fetchFn: typeof fetch } {
+  const calls: CapturedSubmit[] = [];
+  const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: { ...(init?.headers as Record<string, string>) },
+      rawBody: String(init?.body),
+    });
+    return respond();
+  }) as typeof fetch;
+  return { calls, fetchFn };
+}
+
+const SUBMISSION = { title: "Report", description: "Summarise the repository", priority: 3 };
+const IDEMPOTENCY_KEY = "4f9c2d1e-key-never-in-url-or-body";
+
+function accepted(replayed: boolean): Response {
+  return new Response(JSON.stringify({ task_id: "t1", status: "pending", engagement_id: "eng-1", replayed }), {
+    status: 202,
+    headers: { "Content-Type": "application/json", ...(replayed ? { "Idempotent-Replayed": "true" } : {}) },
+  });
+}
+
+test("TasksApi.submit without options sends no Idempotency-Key and an unchanged body", async () => {
+  const { calls, fetchFn } = captureSubmits(() => accepted(false));
+  const client = new BabyClient({ baseUrl: "http://localhost:8000", token: "secret-token", fetchFn });
+
+  const legacy = await client.tasks.submit(SUBMISSION);
+  const emptyOptions = await client.tasks.submit(SUBMISSION, {});
+
+  assert.equal(legacy.task_id, "t1");
+  assert.equal(emptyOptions.replayed, false);
+  for (const call of calls) {
+    assert.equal(call.method, "POST");
+    assert.equal(call.url, "http://localhost:8000/api/v1/tasks/submit");
+    assert.equal("Idempotency-Key" in call.headers, false);
+    assert.deepEqual(JSON.parse(call.rawBody), SUBMISSION);
+  }
+});
+
+test("TasksApi.submit sends idempotencyKey only as the Idempotency-Key header", async () => {
+  const { calls, fetchFn } = captureSubmits(() => accepted(false));
+  const client = new BabyClient({
+    baseUrl: "http://localhost:8000",
+    token: "secret-token",
+    engagementId: "eng-1",
+    fetchFn,
+  });
+
+  await client.tasks.submit(SUBMISSION, { idempotencyKey: IDEMPOTENCY_KEY });
+
+  const call = calls[0]!;
+  assert.equal(call.headers["Idempotency-Key"], IDEMPOTENCY_KEY);
+  // Authentication, engagement and content headers are unaffected.
+  assert.equal(call.headers["Authorization"], "Bearer secret-token");
+  assert.equal(call.headers["X-Engagement-ID"], "eng-1");
+  assert.equal(call.headers["Content-Type"], "application/json");
+  // The key never leaks into the URL or the body; the body is exactly the submission.
+  assert.equal(call.url, "http://localhost:8000/api/v1/tasks/submit");
+  assert.equal(call.rawBody.includes(IDEMPOTENCY_KEY), false);
+  assert.deepEqual(JSON.parse(call.rawBody), SUBMISSION);
+});
+
+test("TasksApi.submit parses a replayed response with the same return type", async () => {
+  const { fetchFn } = captureSubmits(() => accepted(true));
+  const client = new BabyClient({ baseUrl: "http://localhost:8000", fetchFn });
+
+  const replay = await client.tasks.submit(SUBMISSION, { idempotencyKey: IDEMPOTENCY_KEY });
+
+  assert.deepEqual(replay, { task_id: "t1", status: "pending", engagement_id: "eng-1", replayed: true });
+});
+
+test("TasksApi.submit maps keyed errors as before and never exposes the key", async () => {
+  const cases: [number, string, new (...args: never[]) => Error][] = [
+    [409, "Idempotency-Key was already used for a different request", ConflictError],
+    [422, "Idempotency-Key must be 1-255 visible ASCII characters", ClientValidationError],
+    [503, "Task t1 was created but its audit record could not be written; retry the same request", ServerError],
+  ];
+  for (const [status, detail, errorClass] of cases) {
+    const { calls, fetchFn } = captureSubmits(
+      () => new Response(JSON.stringify({ detail }), { status, headers: { "Content-Type": "application/json" } })
+    );
+    const client = new BabyClient({ baseUrl: "http://localhost:8000", token: "secret-token", fetchFn });
+
+    await assert.rejects(
+      () => client.tasks.submit(SUBMISSION, { idempotencyKey: IDEMPOTENCY_KEY }),
+      (err: unknown) => {
+        assert.ok(err instanceof errorClass, `status ${status} should map to ${errorClass.name}`);
+        const serialized = `${String((err as Error).message)} ${JSON.stringify(err)}`;
+        assert.equal(serialized.includes(IDEMPOTENCY_KEY), false);
+        return true;
+      }
+    );
+    assert.equal(calls.length, 1, "a failed submission is never retried automatically");
+  }
+});
