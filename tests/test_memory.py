@@ -1,10 +1,11 @@
 """Tests for the memory subsystem."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
 from baby.core import AgentId, MemoryRecord, TaskId
+from baby.core.contracts import utc_now
 from baby.memory import InMemoryStore
 
 
@@ -53,7 +54,7 @@ class TestInMemoryStore:
         record = MemoryRecord(
             record_type="temporary",
             content={"value": "expired"},
-            expires_at=datetime.utcnow() - timedelta(seconds=1),
+            expires_at=utc_now() - timedelta(seconds=1),
         )
         self.store.save(record)
 

@@ -9,7 +9,6 @@ Comprehensive E2E scenarios verifying:
 """
 
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 from unittest.mock import patch
@@ -31,6 +30,7 @@ from baby.core import (
     TaskStatus,
     WorkerStatus,
 )
+from baby.core.contracts import utc_now
 from baby.errors import (
     LeaseLostError,
 )
@@ -498,8 +498,8 @@ class TestWorkerAndFailureScenariosE2E:
         worker_store = SQLiteWorkerStore(task_store.db)
 
         w_id = new_worker_id()
-        worker_store.register(w_id, "host", 1000, datetime.utcnow())
-        worker_store.set_status(w_id, WorkerStatus.IDLE, datetime.utcnow())
+        worker_store.register(w_id, "host", 1000, utc_now())
+        worker_store.set_status(w_id, WorkerStatus.IDLE, utc_now())
 
         queue = DurableTaskQueue(task_store, worker_store, lease_duration_seconds=0.1)
         task = Task(title="Fenced Task", description="fenced", user_id=ENG_A)
@@ -540,8 +540,8 @@ class TestWorkerAndFailureScenariosE2E:
         w1 = new_worker_id()
         w2 = new_worker_id()
         for w in (w1, w2):
-            worker_store.register(w, "host", 1000, datetime.utcnow())
-            worker_store.set_status(w, WorkerStatus.IDLE, datetime.utcnow())
+            worker_store.register(w, "host", 1000, utc_now())
+            worker_store.set_status(w, WorkerStatus.IDLE, utc_now())
 
         queue = DurableTaskQueue(task_store, worker_store)
         task = Task(title="Race Task", description="race", user_id=ENG_A)

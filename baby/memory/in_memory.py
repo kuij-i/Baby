@@ -1,10 +1,9 @@
 """Simple in-memory memory store for the initial BABY implementation."""
 
 from copy import deepcopy
-from datetime import datetime
 from typing import Optional, Sequence
 
-from baby.core import AgentId, MemoryRecord, TaskId
+from baby.core import AgentId, MemoryRecord, TaskId, utc_now
 from baby.memory.base import MemoryStore
 
 
@@ -64,7 +63,7 @@ class InMemoryStore(MemoryStore):
 
     @staticmethod
     def _is_expired(record: MemoryRecord) -> bool:
-        return record.expires_at is not None and record.expires_at <= datetime.utcnow()
+        return record.expires_at is not None and record.expires_at <= utc_now()
 
 
 memory_store = InMemoryStore()

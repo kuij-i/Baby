@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from baby.core import AgentId, AuditEvent, AuditEventType, TaskId
+from baby.core import AgentId, AuditEvent, AuditEventType, TaskId, utc_now
 from baby.persistence.database import DatabaseManager, db_manager
 
 
@@ -36,7 +36,7 @@ class SQLiteAuditLog:
             task_id=task_id,
             agent_id=agent_id,
             user_id=user_id,
-            timestamp=datetime.utcnow(),
+            timestamp=utc_now(),
             details=details or {},
         )
 

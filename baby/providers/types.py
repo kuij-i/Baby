@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from baby.core.contracts import utc_now
+
 
 class ChatMessage(BaseModel):
     """A single message in a chat conversation."""
@@ -33,7 +35,7 @@ class ProviderResponse(BaseModel):
     finish_reason: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     raw_response: Optional[Dict[str, Any]] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now)
 
 
 class ToolDefinition(BaseModel):

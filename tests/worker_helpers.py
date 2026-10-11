@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 from baby.agents.base import Agent
 from baby.core import AgentCapability, AgentId, AgentResult, AgentSpec, ExecutionContext
+from baby.core.contracts import utc_now
 from baby.providers.base import ModelProvider
 from baby.providers.types import ProviderResponse, TokenUsage
 
@@ -97,7 +98,6 @@ class WriteFileProvider(ModelProvider):
 
 def race_claim(database_url: str, worker_id: str, barrier: Any, results: Any, attempts: int) -> None:
     """Child-process claim racer: register, wait at the barrier, then claim as fast as possible."""
-    from datetime import datetime
 
     from baby.core import WorkerStatus
     from baby.persistence.database import DatabaseManager
@@ -108,7 +108,7 @@ def race_claim(database_url: str, worker_id: str, barrier: Any, results: Any, at
     db = DatabaseManager(database_url)
     tasks = SQLiteTaskStore(db)
     workers = SQLiteWorkerStore(db)
-    workers.register(worker_id, hostname="test", pid=0, now=datetime.utcnow())
+    workers.register(worker_id, hostname="test", pid=0, now=utc_now())
     queue = DurableTaskQueue(tasks, workers, lease_duration_seconds=300)
     claimed: List[str] = []
     barrier.wait()
@@ -118,6 +118,6 @@ def race_claim(database_url: str, worker_id: str, barrier: Any, results: Any, at
             break
         claimed.append(str(got.record.task_id))
         # Release the worker back to IDLE so it may claim again (lease stays: task is owned).
-        workers.set_status(worker_id, WorkerStatus.IDLE, datetime.utcnow())
+        workers.set_status(worker_id, WorkerStatus.IDLE, utc_now())
     results.put((worker_id, claimed))
     db.close()

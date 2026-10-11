@@ -4,7 +4,7 @@ import secrets
 from typing import Optional
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -78,9 +78,7 @@ class Settings(BaseSettings):
     worker_shutdown_grace_seconds: float = 10.0  # 0..600, wait for workers to stop before terminating
     worker_max_task_seconds: float = 3600.0  # 1..86400, bounded execution per claimed task
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 
 
 # Minimum length for configured API bearer tokens (secrets.token_hex(24) yields 48 characters).

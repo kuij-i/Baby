@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from baby.agents import agent_registry
 from baby.audit import audit_log
+from baby.core.contracts import utc_now
 from baby.logging import get_logger
 from baby.memory import memory_store
 from baby.providers import provider_registry
@@ -40,7 +41,7 @@ class SystemHealth(BaseModel):
     """Aggregated health status for the BABY platform."""
 
     status: HealthStatus
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now)
     version: str = "0.1.0"
     components: Dict[str, ComponentHealth] = Field(default_factory=dict)
 

@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import UUID
 
-from baby.core import AgentId, ApprovalRequest, TaskId, TaskRecord, TaskStatus, ensure_valid_transition
+from baby.core import AgentId, ApprovalRequest, TaskId, TaskRecord, TaskStatus, ensure_valid_transition, utc_now
 from baby.errors import ApprovalExpiredError, InvalidStateTransitionError, TaskNotFoundError
 from baby.logging import get_logger
 
@@ -134,7 +134,7 @@ class ApprovalService:
 
         digest = operation_digest(operation, str(agent_id), permission, arguments)
         granted = False
-        now = now or datetime.utcnow()
+        now = now or utc_now()
         ttl = approval_ttl()
 
         with store.db.immediate_transaction() as conn:
@@ -234,7 +234,7 @@ class ApprovalService:
             if request.approved is not None:
                 raise InvalidStateTransitionError(f"Approval request {request_id} was already decided")
 
-            now = now or datetime.utcnow()
+            now = now or utc_now()
             expired_reason = expired_approval_reason(record, now, approval_ttl())
             if expired_reason is not None:
                 # Too late to decide: fail the task closed instead of recording the decision.

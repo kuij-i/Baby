@@ -31,6 +31,7 @@ from baby.core import (
     TaskStatus,
     WorkerStatus,
     ensure_valid_transition,
+    utc_now,
 )
 from baby.errors import InvalidStateTransitionError, LeaseLostError, TaskNotFoundError
 from baby.logging import get_logger
@@ -42,7 +43,7 @@ logger = get_logger(__name__)
 
 
 def utcnow() -> datetime:
-    return datetime.utcnow()
+    return utc_now()
 
 
 @dataclass(frozen=True)

@@ -4,12 +4,37 @@ These contracts define the core types and interfaces that form the foundation
 of the BABY system. All major components communicate using these types.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+
+
+def utc_now() -> datetime:
+    """Current time as a naive UTC ``datetime`` (Baby's canonical timestamp form).
+
+    Replaces the deprecated ``datetime.utcnow()``. Timestamps stay naive UTC because
+    every persisted row, lease/expiry comparison and API response already uses that
+    form; mixing in aware values would make comparisons raise ``TypeError``.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def to_naive_utc(value: datetime) -> datetime:
+    """Normalise a datetime to naive UTC.
+
+    Aware values (e.g. ``...Z`` or ``+02:00`` from API clients) are converted to UTC;
+    naive values, including legacy stored ones, are already UTC by convention.
+    """
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+# Datetime field type for contracts: accepts naive or aware input, always stores naive UTC.
+UTCDatetime = Annotated[datetime, AfterValidator(to_naive_utc)]
 
 
 class TaskId(BaseModel):
@@ -112,7 +137,7 @@ class Task(BaseModel):
     id: TaskId = Field(default_factory=TaskId)
     title: str = Field(..., min_length=1)
     description: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: UTCDatetime = Field(default_factory=utc_now)
     user_id: Optional[str] = None
     priority: int = Field(default=0, ge=0, le=10)
 
@@ -133,7 +158,7 @@ class Plan(BaseModel):
 
     task_id: TaskId
     steps: List[PlanStep] = Field(min_length=1)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: UTCDatetime = Field(default_factory=utc_now)
     reasoning: str = Field(..., min_length=1)
 
 
@@ -157,7 +182,7 @@ class AgentResult(BaseModel):
     error: Optional[str] = None
     execution_time_ms: int = Field(default=0, ge=0)
     tokens_used: Optional[int] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: UTCDatetime = Field(default_factory=utc_now)
 
 
 class VerificationResult(BaseModel):
@@ -167,7 +192,7 @@ class VerificationResult(BaseModel):
     verified: bool
     verification_method: str
     issues: List[str] = Field(default_factory=list)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: UTCDatetime = Field(default_factory=utc_now)
 
 
 class ApprovalRequest(BaseModel):
@@ -186,16 +211,16 @@ class ApprovalRequest(BaseModel):
     action_type: str = Field(..., min_length=1)
     reason: str = Field(..., min_length=1)
     risk_level: str = Field(...)  # low, medium, high, critical
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: UTCDatetime = Field(default_factory=utc_now)
     requires_approval: bool = True
     approved: Optional[bool] = None
-    approval_timestamp: Optional[datetime] = None
+    approval_timestamp: Optional[UTCDatetime] = None
     engagement_id: Optional[str] = None
     permission: Optional[str] = None
     operation_digest: Optional[str] = None
     operation_summary: Dict[str, Any] = Field(default_factory=dict)
     decided_by: Optional[str] = None
-    consumed_at: Optional[datetime] = None
+    consumed_at: Optional[UTCDatetime] = None
 
 
 class Artifact(BaseModel):
@@ -207,7 +232,7 @@ class Artifact(BaseModel):
     name: str = Field(..., min_length=1)
     artifact_type: str = Field(..., min_length=1)
     content: Any
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: UTCDatetime = Field(default_factory=utc_now)
     verified: bool = False
 
 
@@ -219,8 +244,8 @@ class MemoryRecord(BaseModel):
     agent_id: Optional[AgentId] = None
     record_type: str = Field(..., min_length=1)  # preference, decision, fact, history
     content: Dict[str, Any]
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    expires_at: Optional[datetime] = None
+    created_at: UTCDatetime = Field(default_factory=utc_now)
+    expires_at: Optional[UTCDatetime] = None
 
 
 class AuditEventType(str, Enum):
@@ -258,12 +283,11 @@ class AuditEvent(BaseModel):
     event_type: AuditEventType
     task_id: Optional[TaskId] = None
     agent_id: Optional[AgentId] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: UTCDatetime = Field(default_factory=utc_now)
     details: Dict[str, Any] = Field(default_factory=dict)
     user_id: Optional[str] = None
 
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class TaskStatus(str, Enum):
@@ -358,9 +382,9 @@ class TaskRecord(BaseModel):
     title: str
     description: str = ""
     status: TaskStatus = TaskStatus.PENDING
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    completed_at: Optional[datetime] = None
+    created_at: UTCDatetime = Field(default_factory=utc_now)
+    updated_at: UTCDatetime = Field(default_factory=utc_now)
+    completed_at: Optional[UTCDatetime] = None
     user_id: Optional[str] = None
     priority: int = 0
     assigned_agent_id: Optional[AgentId] = None
@@ -384,9 +408,9 @@ class TaskLease(BaseModel):
     task_id: TaskId
     worker_id: str = Field(..., min_length=1, max_length=128)
     fence: int = Field(..., gt=0)
-    claimed_at: datetime
-    renewed_at: datetime
-    lease_expires_at: datetime
+    claimed_at: UTCDatetime
+    renewed_at: UTCDatetime
+    lease_expires_at: UTCDatetime
 
 
 class WorkerInfo(BaseModel):
@@ -397,8 +421,8 @@ class WorkerInfo(BaseModel):
     current_task_id: Optional[TaskId] = None
     tasks_completed: int = 0
     tasks_failed: int = 0
-    started_at: datetime = Field(default_factory=datetime.utcnow)
-    last_heartbeat_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: UTCDatetime = Field(default_factory=utc_now)
+    last_heartbeat_at: UTCDatetime = Field(default_factory=utc_now)
     last_error: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    stopped_at: Optional[datetime] = None
+    stopped_at: Optional[UTCDatetime] = None
