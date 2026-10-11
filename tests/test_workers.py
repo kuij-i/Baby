@@ -198,7 +198,7 @@ class TestSchema:
             )
         legacy.init_schema()
         legacy.init_schema()  # idempotent
-        assert legacy.schema_version() == 2
+        assert legacy.schema_version() == 3
         with legacy.transaction() as conn:
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(task_records)")}
             tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}

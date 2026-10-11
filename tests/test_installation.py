@@ -79,7 +79,7 @@ class TestDatabaseCreationAndMigrations:
         db.init_schema()
         assert deep_dir.exists()
         assert db_file.exists()
-        assert db.schema_version() == 2
+        assert db.schema_version() == 3
 
         with db.transaction() as conn:
             tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -95,7 +95,7 @@ class TestDatabaseCreationAndMigrations:
         db.init_schema()
         db.init_schema()
         db.init_schema()
-        assert db.schema_version() == 2
+        assert db.schema_version() == 3
 
         with db.transaction() as conn:
             conn.execute(
@@ -128,7 +128,7 @@ class TestDatabaseCreationAndMigrations:
 
         # Reopen in new instance (simulating application restart)
         db2 = DatabaseManager(url)
-        assert db2.schema_version() == 2
+        assert db2.schema_version() == 3
         with db2.transaction() as conn:
             row = conn.execute("SELECT content FROM memory_records WHERE id='persist-1'").fetchone()
             assert row is not None

@@ -323,7 +323,7 @@
           "Tasks"
         ],
         "summary": "Submit Task",
-        "description": "Durably enqueue a task for execution by a worker process.\n\nThe task's engagement is resolved server-side from the caller's authorized scope;\nthe request can only *select* one of the caller's engagements, never expand it.\nNothing is executed by the API: a worker claims the task asynchronously.",
+        "description": "Durably enqueue a task for execution by a worker process.\n\nThe task's engagement is resolved server-side from the caller's authorized scope;\nthe request can only *select* one of the caller's engagements, never expand it.\nNothing is executed by the API: a worker claims the task asynchronously.\n\nWith an ``Idempotency-Key`` the submission happens at most once per\n(principal, engagement, key), across retries, concurrent requests and restarts.",
         "operationId": "submit_task_tasks_submit_post",
         "security": [
           {
@@ -349,6 +349,24 @@
               ],
               "title": "X-Engagement-Id"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional client-chosen key (1-255 visible ASCII characters, e.g. a UUID). Scoped to the authenticated principal and the resolved engagement. Repeating it with an identical request returns the original task (replayed=true) instead of creating a duplicate; repeating it with a different request returns 409. Keys are kept as long as the task record exists.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional client-chosen key (1-255 visible ASCII characters, e.g. a UUID). Scoped to the authenticated principal and the resolved engagement. Repeating it with an identical request returns the original task (replayed=true) instead of creating a duplicate; repeating it with a different request returns 409. Keys are kept as long as the task record exists."
           }
         ],
         "requestBody": {
@@ -1332,7 +1350,7 @@
           "Tasks"
         ],
         "summary": "Submit Task",
-        "description": "Durably enqueue a task for execution by a worker process.\n\nThe task's engagement is resolved server-side from the caller's authorized scope;\nthe request can only *select* one of the caller's engagements, never expand it.\nNothing is executed by the API: a worker claims the task asynchronously.",
+        "description": "Durably enqueue a task for execution by a worker process.\n\nThe task's engagement is resolved server-side from the caller's authorized scope;\nthe request can only *select* one of the caller's engagements, never expand it.\nNothing is executed by the API: a worker claims the task asynchronously.\n\nWith an ``Idempotency-Key`` the submission happens at most once per\n(principal, engagement, key), across retries, concurrent requests and restarts.",
         "operationId": "submit_task_api_v1_tasks_submit_post",
         "security": [
           {
@@ -1358,6 +1376,24 @@
               ],
               "title": "X-Engagement-Id"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional client-chosen key (1-255 visible ASCII characters, e.g. a UUID). Scoped to the authenticated principal and the resolved engagement. Repeating it with an identical request returns the original task (replayed=true) instead of creating a duplicate; repeating it with a different request returns 409. Keys are kept as long as the task record exists.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional client-chosen key (1-255 visible ASCII characters, e.g. a UUID). Scoped to the authenticated principal and the resolved engagement. Repeating it with an identical request returns the original task (replayed=true) instead of creating a duplicate; repeating it with a different request returns 409. Keys are kept as long as the task record exists."
           }
         ],
         "requestBody": {
@@ -2793,6 +2829,11 @@
           "engagement_id": {
             "type": "string",
             "title": "Engagement Id"
+          },
+          "replayed": {
+            "type": "boolean",
+            "title": "Replayed",
+            "default": false
           }
         },
         "type": "object",

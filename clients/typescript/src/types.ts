@@ -242,6 +242,7 @@ export interface TaskSubmitResponse {
   task_id: string;
   status: TaskStatus;
   engagement_id: string;
+  replayed?: boolean;
 }
 
 /** Operational record for one task. ``status`` follows the authoritative state machine. */
