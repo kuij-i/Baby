@@ -26,7 +26,7 @@ from baby.audit import AuditLog, audit_log, task_created_event_id
 from baby.configuration import settings
 from baby.core import AuditEvent, AuditEventType, TaskId
 from baby.observability import task_tracker, worker_tracker
-from baby.persistence.database import db_manager
+from baby.persistence.database import DatabaseManager, db_manager
 from baby.persistence.sqlite_audit import SQLiteAuditLog
 
 OPERATOR_TOKEN = "op-token-for-tests-0123456789abcdef"
@@ -279,3 +279,21 @@ class TestRecordOnce:
         audit_log.use_backend(None)
         assert audit_log.get_events(task_id=task_id) == []  # written to SQLite, not the in-memory list
         assert len(SQLiteAuditLog(db_manager).get_events(task_id=task_id)) == 1
+
+    def test_sqlite_record_once_raises_on_non_key_constraint_failure(self, tmp_path: Path):
+        """Only a duplicate ID is "already recorded"; any other rejected insert must raise, never return None."""
+        path = tmp_path / "constrained.db"
+        with sqlite3.connect(path) as conn:
+            conn.execute(
+                "CREATE TABLE audit_events (id TEXT PRIMARY KEY, event_type TEXT NOT NULL, task_id TEXT, "
+                "agent_id TEXT, user_id TEXT, timestamp TEXT NOT NULL, "
+                "details TEXT NOT NULL CHECK (length(details) < 10))"
+            )
+        manager = DatabaseManager(f"sqlite:///{path}")
+        manager.init_schema()
+        task_id = TaskId()
+        with pytest.raises(sqlite3.IntegrityError):
+            SQLiteAuditLog(manager).record_once(
+                task_created_event_id(task_id), AuditEventType.TASK_CREATED, task_id=task_id, details={"x": "y" * 50}
+            )
+        assert SQLiteAuditLog(manager).get_events(task_id=task_id) == []

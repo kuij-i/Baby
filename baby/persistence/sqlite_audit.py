@@ -50,17 +50,20 @@ class SQLiteAuditLog:
         user_id: Optional[str] = None,
         details: Optional[dict[str, Any]] = None,
     ) -> Optional[AuditEvent]:
-        """Record an event with a fixed ID unless it already exists (``INSERT OR IGNORE`` on the PK).
+        """Record an event with a fixed ID unless it already exists (``ON CONFLICT(id) DO NOTHING``).
 
         Returns the new event, or None if an event with ``event_id`` is already stored.
-        Safe across processes: the primary key guarantees a single row. Raises on failure.
+        Safe across processes: the primary key guarantees a single row. Only a conflict on the
+        primary key is ignored; any other failure (including other constraint violations, which
+        ``INSERT OR IGNORE`` would silently swallow) raises.
         """
         event = self._event(event_id, event_type, task_id, agent_id, user_id, details)
         with self._db.transaction() as conn:
             cursor = conn.execute(
                 """
-                INSERT OR IGNORE INTO audit_events (id, event_type, task_id, agent_id, user_id, timestamp, details)
-                VALUES (?, ?, ?, ?, ?, ?, ?);
+                INSERT INTO audit_events (id, event_type, task_id, agent_id, user_id, timestamp, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING;
                 """,
                 self._row(event),
             )
