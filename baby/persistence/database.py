@@ -13,7 +13,8 @@ Schema versioning: ``init_schema()`` is idempotent and records the schema versio
 ``PRAGMA user_version``. Version 2 (Phase 12) adds the ``workers`` and ``task_leases``
 tables and the ``task_records.cancel_requested`` / ``task_records.claim_count`` columns.
 Existing version-1 databases are upgraded in place with ``ALTER TABLE ... ADD COLUMN``
-(defaults keep existing rows valid); no data is rewritten or removed.
+(defaults keep existing rows valid); no data is rewritten or removed. Version 3 (Phase 17)
+adds the ``task_idempotency_keys`` table (``CREATE TABLE IF NOT EXISTS``, additive only).
 """
 
 import sqlite3
@@ -28,7 +29,7 @@ from baby.logging import get_logger
 
 logger = get_logger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def parse_sqlite_path(database_url: str) -> str:
@@ -299,6 +300,22 @@ class DatabaseManager:
                     """)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_task_leases_worker ON task_leases(worker_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_task_leases_expires ON task_leases(lease_expires_at);")
+
+                # Schema v3 (Phase 17): idempotent task submission. One row per
+                # (principal, engagement, key); written in the same transaction as the task
+                # it points to, so a key can never be reserved without its task.
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS task_idempotency_keys (
+                        principal TEXT NOT NULL,
+                        engagement_id TEXT NOT NULL,
+                        key_hash TEXT NOT NULL,
+                        request_fingerprint TEXT NOT NULL,
+                        task_id TEXT NOT NULL REFERENCES task_records(task_id) ON DELETE CASCADE,
+                        created_at TEXT NOT NULL,
+                        PRIMARY KEY (principal, engagement_id, key_hash)
+                    );
+                    """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_task_idempotency_task ON task_idempotency_keys(task_id);")
 
                 conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
 

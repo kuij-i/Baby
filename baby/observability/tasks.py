@@ -18,7 +18,6 @@ The in-memory dictionary is used only for ``persistence_backend='in_memory'``.
 """
 
 import threading
-from datetime import datetime
 from typing import Callable, Dict, List, Optional
 from uuid import UUID
 
@@ -35,6 +34,7 @@ from baby.core import (
     TaskStatus,
     VerificationResult,
     ensure_valid_transition,
+    utc_now,
 )
 from baby.logging import get_logger
 from baby.observability.metrics import metrics_collector
@@ -95,7 +95,7 @@ class TaskTracker:
     ) -> None:
         ensure_valid_transition(record.task_id, record.status, status)
         record.status = status
-        record.updated_at = datetime.utcnow()
+        record.updated_at = utc_now()
         if error is not None:
             record.error = error
         if result is not None:
@@ -136,7 +136,7 @@ class TaskTracker:
         With a durable store configured, a persistence failure raises (fail closed):
         a task that cannot be durably recorded must not be reported as accepted.
         """
-        now = datetime.utcnow()
+        now = utc_now()
         record = TaskRecord(
             task_id=task.id,
             title=task.title,
@@ -196,7 +196,7 @@ class TaskTracker:
             ensure_valid_transition(record.task_id, record.status, TaskStatus.FAILED)
             record.status = TaskStatus.FAILED
             record.error = stale_error
-            record.updated_at = datetime.utcnow()
+            record.updated_at = utc_now()
             record.completed_at = record.updated_at
 
         if self._store is not None:
@@ -234,7 +234,7 @@ class TaskTracker:
 
         def _set(record: TaskRecord) -> None:
             record.plan = plan
-            record.updated_at = datetime.utcnow()
+            record.updated_at = utc_now()
 
         return self._mutate(task_id, _set)
 
@@ -250,7 +250,7 @@ class TaskTracker:
                 ensure_valid_transition(record.task_id, record.status, TaskStatus.AWAITING_APPROVAL)
             record.approvals.append(approval)
             record.status = TaskStatus.AWAITING_APPROVAL
-            record.updated_at = datetime.utcnow()
+            record.updated_at = utc_now()
 
         record = self._mutate(task_id, _request)
         if record is not None:
@@ -261,7 +261,7 @@ class TaskTracker:
         """Record the resolution of an approval request."""
 
         def _decide(record: TaskRecord) -> None:
-            now = datetime.utcnow()
+            now = utc_now()
             for req in record.approvals:
                 if req.request_id == request_id:
                     req.approved = approved
@@ -278,7 +278,7 @@ class TaskTracker:
 
         def _verify(record: TaskRecord) -> None:
             record.verifications.append(verification)
-            record.updated_at = datetime.utcnow()
+            record.updated_at = utc_now()
 
         record = self._mutate(task_id, _verify)
         if record is not None:

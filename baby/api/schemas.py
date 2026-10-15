@@ -114,6 +114,8 @@ class TaskSubmitResponse(BaseModel):
     task_id: UUID
     status: TaskStatus
     engagement_id: str
+    # True when an Idempotency-Key replay returned an existing task instead of creating one.
+    replayed: bool = False
 
 
 class TaskCancelResponse(BaseModel):

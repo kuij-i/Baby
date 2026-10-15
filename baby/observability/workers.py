@@ -5,10 +5,9 @@ including lifecycle status, heartbeats, assigned tasks, and completion counts.
 """
 
 import threading
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from baby.core import TaskId, WorkerInfo, WorkerStatus
+from baby.core import TaskId, WorkerInfo, WorkerStatus, utc_now
 from baby.observability.metrics import metrics_collector
 
 
@@ -27,7 +26,7 @@ class WorkerTracker:
     ) -> WorkerInfo:
         """Register or re-register a worker."""
         with self._lock:
-            now = datetime.utcnow()
+            now = utc_now()
             info = WorkerInfo(
                 worker_id=worker_id,
                 status=status,
@@ -44,7 +43,7 @@ class WorkerTracker:
         with self._lock:
             worker = self._workers.get(worker_id)
             if worker:
-                worker.last_heartbeat_at = datetime.utcnow()
+                worker.last_heartbeat_at = utc_now()
             return worker
 
     def assign_task(self, worker_id: str, task_id: TaskId) -> Optional[WorkerInfo]:
@@ -54,7 +53,7 @@ class WorkerTracker:
             if worker:
                 worker.status = WorkerStatus.BUSY
                 worker.current_task_id = task_id
-                worker.last_heartbeat_at = datetime.utcnow()
+                worker.last_heartbeat_at = utc_now()
                 self._update_worker_metrics()
             return worker
 
@@ -65,7 +64,7 @@ class WorkerTracker:
             if worker:
                 worker.status = WorkerStatus.IDLE
                 worker.current_task_id = None
-                worker.last_heartbeat_at = datetime.utcnow()
+                worker.last_heartbeat_at = utc_now()
                 if success:
                     worker.tasks_completed += 1
                     metrics_collector.increment_counter("worker_tasks_completed_total")
@@ -82,7 +81,7 @@ class WorkerTracker:
             worker = self._workers.get(worker_id)
             if worker:
                 worker.status = status
-                worker.last_heartbeat_at = datetime.utcnow()
+                worker.last_heartbeat_at = utc_now()
                 if error:
                     worker.last_error = error
                 self._update_worker_metrics()

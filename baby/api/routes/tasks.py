@@ -4,17 +4,19 @@ Reads (GET) expose engagement-scoped task state. The only writes are task *contr
 operations, which change durable task state and never execute anything in the API
 process:
 
-- ``POST /tasks/submit``                          enqueue a task as PENDING (operator/admin)
+- ``POST /tasks/submit``                          enqueue a task as PENDING (operator/admin);
+                                                  optional ``Idempotency-Key`` header
 - ``POST /tasks/{task_id}/cancel``                 cancel through the state machine (operator/admin)
 - ``POST /tasks/{task_id}/approvals/{request_id}`` approve/deny a pending approval (admin only)
 
 Execution happens exclusively in worker processes (``python -m baby.workers run``).
 """
 
+import re
 from typing import Any, Dict, List, Optional, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from baby.api.auth import AuthenticatedCaller, get_current_caller
@@ -26,11 +28,19 @@ from baby.api.schemas import (
 )
 from baby.audit import audit_log
 from baby.core import AuditEventType, Task, TaskId, TaskStatus
-from baby.errors import ApprovalExpiredError, InvalidStateTransitionError, TaskNotFoundError
+from baby.errors import (
+    ApprovalExpiredError,
+    IdempotencyConflictError,
+    InvalidStateTransitionError,
+    TaskNotFoundError,
+)
 from baby.observability.redaction import redact_sensitive_data
 from baby.observability.tasks import task_tracker
 
 router = APIRouter(tags=["Tasks"])
+
+# Visible ASCII, 1..255 characters (e.g. a UUID). Anything else is rejected with 422.
+IDEMPOTENCY_KEY_PATTERN = re.compile(r"[\x21-\x7e]{1,255}")
 
 
 @router.get("/tasks", response_model=List[TaskView])
@@ -139,7 +149,18 @@ def _get_scoped_task(task_id: UUID, caller: AuthenticatedCaller):  # type: ignor
 @router.post("/tasks/submit", status_code=status.HTTP_202_ACCEPTED, response_model=TaskSubmitResponse)
 def submit_task(
     body: TaskSubmission,
+    response: Response,
     x_engagement_id: Optional[str] = Header(None, alias="X-Engagement-ID"),
+    idempotency_key: Optional[str] = Header(
+        None,
+        alias="Idempotency-Key",
+        description=(
+            "Optional client-chosen key (1-255 visible ASCII characters, e.g. a UUID). Scoped to the "
+            "authenticated principal and the resolved engagement. Repeating it with an identical request "
+            "returns the original task (replayed=true) instead of creating a duplicate; repeating it with a "
+            "different request returns 409. Keys are kept as long as the task record exists."
+        ),
+    ),
     caller: AuthenticatedCaller = Depends(get_current_caller),
 ) -> dict:
     """Durably enqueue a task for execution by a worker process.
@@ -147,6 +168,9 @@ def submit_task(
     The task's engagement is resolved server-side from the caller's authorized scope;
     the request can only *select* one of the caller's engagements, never expand it.
     Nothing is executed by the API: a worker claims the task asynchronously.
+
+    With an ``Idempotency-Key`` the submission happens at most once per
+    (principal, engagement, key), across retries, concurrent requests and restarts.
     """
     effective = caller.restrict_to_engagement(body.engagement_id or x_engagement_id)
     if effective is None:
@@ -155,14 +179,43 @@ def submit_task(
             detail="An engagement_id within the caller's authorized scope is required",
         )
     task = Task(title=body.title, description=body.description, priority=body.priority, user_id=effective)
-    record = _durable_queue().submit(task)
-    audit_log.record(
-        AuditEventType.TASK_CREATED,
-        task_id=task.id,
-        user_id=effective,
-        details={"source": "api", "submitted_by": caller.caller_id, "priority": task.priority},
-    )
-    return {"task_id": str(record.task_id), "status": record.status.value, "engagement_id": effective}
+    queue = _durable_queue()
+    replayed = False
+    if idempotency_key is None:
+        record = queue.submit(task)
+    else:
+        if not IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Idempotency-Key must be 1-255 visible ASCII characters",
+            )
+        from baby.workers.queue import IdempotencyScope
+
+        scope = IdempotencyScope(principal=caller.caller_id, engagement_id=effective, key=idempotency_key)
+        try:
+            record, replayed = queue.submit_idempotent(task, scope)
+        except IdempotencyConflictError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    else:
+        audit_log.record(
+            AuditEventType.TASK_CREATED,
+            task_id=record.task_id,
+            user_id=effective,
+            details={
+                "source": "api",
+                "submitted_by": caller.caller_id,
+                "priority": record.priority,
+                "idempotency_key_used": idempotency_key is not None,
+            },
+        )
+    return {
+        "task_id": str(record.task_id),
+        "status": record.status.value,
+        "engagement_id": record.user_id,
+        "replayed": replayed,
+    }
 
 
 @router.post("/tasks/{task_id}/cancel", response_model=TaskCancelResponse)

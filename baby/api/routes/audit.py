@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from baby.api.auth import AuthenticatedCaller, get_current_caller
 from baby.api.schemas import AuditEventView
 from baby.audit import audit_log
-from baby.core import AgentId, AuditEventType, TaskId
+from baby.core import AgentId, AuditEventType, TaskId, to_naive_utc
 from baby.observability.redaction import redact_sensitive_data
 
 router = APIRouter(tags=["Audit"])
@@ -49,8 +49,10 @@ def list_audit_events(
         agent_id=AgentId(id=agent_id) if agent_id else None,
         event_type=event_type,
         user_id=target_user,
-        start_time=start_time,
-        end_time=end_time,
+        # Stored timestamps are naive UTC; convert "...Z" / "+02:00" inputs so the
+        # comparison neither raises nor shifts by the client's offset.
+        start_time=to_naive_utc(start_time) if start_time else None,
+        end_time=to_naive_utc(end_time) if end_time else None,
         limit=limit,
         offset=offset,
     )

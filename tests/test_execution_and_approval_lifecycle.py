@@ -362,8 +362,8 @@ class TestApprovalExpiry:
         with patch.multiple(
             settings, api_require_auth=True, api_admin_token=ADMIN_TOKEN, api_auth_token=OPERATOR_TOKEN
         ):
-            with patch("baby.permissions.approvals.datetime") as fake_dt:
-                fake_dt.utcnow.return_value = request.created_at + timedelta(minutes=5)
+            with patch("baby.permissions.approvals.utc_now") as fake_now:
+                fake_now.return_value = request.created_at + timedelta(minutes=5)
                 resp = TestClient(app, raise_server_exceptions=False).post(
                     f"/api/v1/tasks/{record.task_id}/approvals/{request.request_id}",
                     json={"approved": True},

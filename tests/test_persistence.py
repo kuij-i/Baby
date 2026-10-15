@@ -11,7 +11,7 @@ Verifies:
 
 import tempfile
 import threading
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -27,6 +27,7 @@ from baby.core import (
     TaskRecord,
     TaskStatus,
 )
+from baby.core.contracts import utc_now
 from baby.errors import ConfigurationError
 from baby.observability.tasks import TaskTracker
 from baby.persistence.database import DatabaseManager, parse_sqlite_path
@@ -80,7 +81,7 @@ class TestDatabaseManager:
         with temp_db_manager.transaction() as conn:
             conn.execute(
                 "INSERT INTO memory_records (id, record_type, content, created_at) VALUES (?, ?, ?, ?)",
-                ("rec-1", "fact", '{"a": 1}', datetime.utcnow().isoformat()),
+                ("rec-1", "fact", '{"a": 1}', utc_now().isoformat()),
             )
 
         with temp_db_manager.transaction() as conn:
@@ -93,7 +94,7 @@ class TestDatabaseManager:
             with temp_db_manager.transaction() as conn:
                 conn.execute(
                     "INSERT INTO memory_records (id, record_type, content, created_at) VALUES (?, ?, ?, ?)",
-                    ("rec-fail", "fact", '{"a": 1}', datetime.utcnow().isoformat()),
+                    ("rec-fail", "fact", '{"a": 1}', utc_now().isoformat()),
                 )
                 raise ValueError("Forced error to trigger rollback")
 
@@ -112,7 +113,7 @@ class TestDatabaseManager:
                     with temp_db_manager.transaction() as conn:
                         conn.execute(
                             "INSERT INTO memory_records (id, record_type, content, created_at) VALUES (?, ?, ?, ?)",
-                            (f"thread-{idx}-{i}", "fact", '{"v": 1}', datetime.utcnow().isoformat()),
+                            (f"thread-{idx}-{i}", "fact", '{"v": 1}', utc_now().isoformat()),
                         )
             except Exception as e:
                 errors.append(e)
@@ -166,7 +167,7 @@ class TestSQLiteMemoryStore:
         expired = MemoryRecord(
             record_type="temp",
             content={"temp": True},
-            expires_at=datetime.utcnow() - timedelta(minutes=5),
+            expires_at=utc_now() - timedelta(minutes=5),
         )
         store.save(expired)
 

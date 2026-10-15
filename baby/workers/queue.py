@@ -17,9 +17,11 @@ has expired, was revoked by recovery, or was re-issued — the worker can never 
 result for a task it no longer owns.
 """
 
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 from uuid import UUID
 
 from baby.core import (
@@ -31,8 +33,9 @@ from baby.core import (
     TaskStatus,
     WorkerStatus,
     ensure_valid_transition,
+    utc_now,
 )
-from baby.errors import InvalidStateTransitionError, LeaseLostError, TaskNotFoundError
+from baby.errors import IdempotencyConflictError, InvalidStateTransitionError, LeaseLostError, TaskNotFoundError
 from baby.logging import get_logger
 from baby.observability.metrics import metrics_collector
 from baby.persistence.sqlite_tasks import SQLiteTaskStore
@@ -42,7 +45,7 @@ logger = get_logger(__name__)
 
 
 def utcnow() -> datetime:
-    return datetime.utcnow()
+    return utc_now()
 
 
 @dataclass(frozen=True)
@@ -72,6 +75,40 @@ class LeaseState:
     held: bool
     cancel_requested: bool = False
     lease_expires_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class IdempotencyScope:
+    """Who submitted a task and under which ``Idempotency-Key``.
+
+    Keys are scoped to ``(principal, engagement_id)``: the same key used by a different
+    principal or in a different engagement is unrelated and can never return another
+    caller's task. Only a SHA-256 of the key is stored.
+    """
+
+    principal: str
+    engagement_id: str
+    key: str
+
+    @property
+    def key_hash(self) -> str:
+        return hashlib.sha256(self.key.encode("utf-8")).hexdigest()
+
+
+def submission_fingerprint(task: Task) -> str:
+    """Canonical SHA-256 of the request fields that define a submission (no secrets, no headers)."""
+    canonical = json.dumps(
+        {
+            "title": task.title,
+            "description": task.description,
+            "priority": task.priority,
+            "engagement_id": task.user_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def approvals_ready(record: TaskRecord, now: Optional[datetime] = None) -> bool:
@@ -127,7 +164,68 @@ class DurableTaskQueue:
     def submit(self, task: Task) -> TaskRecord:
         """Durably enqueue a task as PENDING. Nothing is executed by the caller."""
         now = self._clock()
-        record = TaskRecord(
+        record = self._pending_record(task, now)
+        with self._db.immediate_transaction() as conn:
+            if self._tasks.read_record(conn, task.id) is not None:
+                raise InvalidStateTransitionError(f"Task {task.id} already exists")
+            self._tasks.write_record(conn, record)
+        metrics_collector.record_task_created(task.priority)
+        return record
+
+    def submit_idempotent(self, task: Task, scope: IdempotencyScope) -> Tuple[TaskRecord, bool]:
+        """Enqueue ``task`` at most once per ``scope``; return ``(record, replayed)``.
+
+        Runs in one ``BEGIN IMMEDIATE`` transaction, so concurrent submissions with the
+        same key (from any process) are serialised: exactly one inserts the task, the
+        others see its key row. The task row and the key row are written together, so a
+        failed or interrupted transaction leaves neither behind. The
+        ``(principal, engagement_id, key_hash)`` primary key backs this up.
+
+        Raises:
+            IdempotencyConflictError: The key was already used in this scope for a
+                request with different content.
+        """
+        if task.user_id != scope.engagement_id:
+            raise ValueError("Idempotency scope engagement must match the task's engagement")
+        now = self._clock()
+        fingerprint = submission_fingerprint(task)
+        with self._db.immediate_transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT request_fingerprint, task_id FROM task_idempotency_keys
+                WHERE principal = ? AND engagement_id = ? AND key_hash = ?
+                """,
+                (scope.principal, scope.engagement_id, scope.key_hash),
+            ).fetchone()
+            if row is not None:
+                if row["request_fingerprint"] != fingerprint:
+                    raise IdempotencyConflictError(
+                        "Idempotency-Key was already used with a different request in this engagement"
+                    )
+                existing = self._tasks.read_record(conn, TaskId(id=UUID(row["task_id"])))
+                if existing is None or existing.user_id != scope.engagement_id:
+                    # The key's task is gone or out of scope: never hand back anything else.
+                    raise IdempotencyConflictError("Idempotency-Key refers to a task that is no longer available")
+                return existing, True
+
+            record = self._pending_record(task, now)
+            if self._tasks.read_record(conn, task.id) is not None:
+                raise InvalidStateTransitionError(f"Task {task.id} already exists")
+            self._tasks.write_record(conn, record)
+            conn.execute(
+                """
+                INSERT INTO task_idempotency_keys
+                    (principal, engagement_id, key_hash, request_fingerprint, task_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (scope.principal, scope.engagement_id, scope.key_hash, fingerprint, str(task.id), ts(now)),
+            )
+        metrics_collector.record_task_created(task.priority)
+        return record, False
+
+    @staticmethod
+    def _pending_record(task: Task, now: datetime) -> TaskRecord:
+        return TaskRecord(
             task_id=task.id,
             title=task.title,
             description=task.description or "",
@@ -137,12 +235,6 @@ class DurableTaskQueue:
             user_id=task.user_id,
             priority=task.priority,
         )
-        with self._db.immediate_transaction() as conn:
-            if self._tasks.read_record(conn, task.id) is not None:
-                raise InvalidStateTransitionError(f"Task {task.id} already exists")
-            self._tasks.write_record(conn, record)
-        metrics_collector.record_task_created(task.priority)
-        return record
 
     # ------------------------------------------------------------------
     # Claiming

@@ -37,6 +37,7 @@ from baby.core import (
     ToolSpec,
     WorkerStatus,
 )
+from baby.core.contracts import utc_now
 from baby.errors import (
     ConfigurationError,
     InvalidStateTransitionError,
@@ -84,7 +85,7 @@ class FakeClock:
     """Deterministic clock for lease/heartbeat timing (no sleeps)."""
 
     def __init__(self) -> None:
-        self.now = datetime.utcnow()
+        self.now = utc_now()
 
     def __call__(self) -> datetime:
         return self.now
@@ -125,16 +126,16 @@ def stores():
     return task_store, SQLiteWorkerStore(task_store.db)
 
 
-def _queue(stores, clock: Callable[[], datetime] = datetime.utcnow, lease: float = 30.0) -> DurableTaskQueue:
+def _queue(stores, clock: Callable[[], datetime] = utc_now, lease: float = 30.0) -> DurableTaskQueue:
     return DurableTaskQueue(stores[0], stores[1], lease_duration_seconds=lease, clock=clock)
 
 
-def _recovery(stores, clock: Callable[[], datetime] = datetime.utcnow, stale: float = 10.0) -> WorkerRecovery:
+def _recovery(stores, clock: Callable[[], datetime] = utc_now, stale: float = 10.0) -> WorkerRecovery:
     return WorkerRecovery(stores[0], stores[1], stale_timeout_seconds=stale, clock=clock)
 
 
 def _register(stores, worker_id: str, now: Optional[datetime] = None) -> str:
-    now = now or datetime.utcnow()
+    now = now or utc_now()
     stores[1].register(worker_id, hostname="test-host", pid=1234, now=now)
     stores[1].set_status(worker_id, WorkerStatus.IDLE, now)
     return worker_id
@@ -189,7 +190,7 @@ class TestSchema:
                     assigned_agent_id TEXT, assigned_worker_id TEXT, plan TEXT, result TEXT,
                     error TEXT, approvals TEXT, verifications TEXT, retry_count INTEGER NOT NULL DEFAULT 0
                 )""")
-            now = datetime.utcnow().isoformat()
+            now = utc_now().isoformat()
             conn.execute(
                 "INSERT INTO task_records (task_id, title, description, status, created_at, updated_at, approvals,"
                 " verifications) VALUES (?, 't', 'd', 'pending', ?, ?, '[]', '[]')",
@@ -197,7 +198,7 @@ class TestSchema:
             )
         legacy.init_schema()
         legacy.init_schema()  # idempotent
-        assert legacy.schema_version() == 2
+        assert legacy.schema_version() == 3
         with legacy.transaction() as conn:
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(task_records)")}
             tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -505,7 +506,7 @@ class TestConcurrency:
             assert len(winners) == 1, results
             assert results[winners[0]].record.task_id == record.task_id
             for wid in ("race-A", "race-B"):
-                setup_stores[1].set_status(wid, WorkerStatus.IDLE, datetime.utcnow())
+                setup_stores[1].set_status(wid, WorkerStatus.IDLE, utc_now())
         setup.close()
 
     def test_competing_worker_processes_claim_each_task_exactly_once(self, durable_env, stores):
@@ -910,7 +911,7 @@ class TestRecovery:
 
     async def test_api_restart_fails_tasks_of_dead_workers(self, stores):
         queue = _queue(stores, lease=300)
-        worker = _register(stores, "w-dead", datetime.utcnow() - timedelta(hours=1))
+        worker = _register(stores, "w-dead", utc_now() - timedelta(hours=1))
         record = _submit(queue)
         assert queue.claim_next(worker) is not None
         async with lifespan(app):

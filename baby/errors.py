@@ -102,3 +102,9 @@ class LeaseLostError(TaskClaimError):
     """
 
     pass
+
+
+class IdempotencyConflictError(BabyException):
+    """An ``Idempotency-Key`` was reused for a request that differs from the original."""
+
+    pass

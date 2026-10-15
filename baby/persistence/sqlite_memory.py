@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional, Sequence
 from uuid import UUID
 
-from baby.core import AgentId, MemoryRecord, TaskId
+from baby.core import AgentId, MemoryRecord, TaskId, utc_now
 from baby.memory.base import MemoryStore
 from baby.persistence.database import DatabaseManager, db_manager
 
@@ -134,7 +134,7 @@ class SQLiteMemoryStore(MemoryStore):
 
     @staticmethod
     def _is_expired(record: MemoryRecord) -> bool:
-        return record.expires_at is not None and record.expires_at <= datetime.utcnow()
+        return record.expires_at is not None and record.expires_at <= utc_now()
 
     @staticmethod
     def _row_to_record(row: sqlite3.Row) -> MemoryRecord:
