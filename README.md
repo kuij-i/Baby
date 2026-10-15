@@ -345,7 +345,15 @@ characters, e.g. a UUID) so clients can retry safely:
   and replays work across API and worker restarts.
 - **Retention:** keys are kept as long as the task record exists (there is no expiry). Only a
   SHA-256 of the key and of the request fields is stored.
-- Requests without the header behave exactly as before.
+- **Creation audit:** every created task gets exactly one `TASK_CREATED` audit event. The task is
+  committed before that event is written, so if the audit write fails the request returns
+  `503` naming the task: it was created, but the API does not report success. Retrying with the
+  same key returns that task (`replayed: true`) and records the missing event (marked
+  `recovered_on_replay`); retries never create a second task or a second event. Without a key
+  there is nothing to retry against, so the `503` says not to resubmit.
+- Requests without the header behave exactly as before (apart from that `503` on an audit failure).
+- **TypeScript client:** `client.tasks.submit(submission, { idempotencyKey })`; the option is
+  optional and is sent only as the header.
 
 ### Approval Lifecycle
 

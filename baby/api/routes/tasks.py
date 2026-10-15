@@ -26,18 +26,20 @@ from baby.api.schemas import (
     TaskSubmitResponse,
     TaskView,
 )
-from baby.audit import audit_log
-from baby.core import AuditEventType, Task, TaskId, TaskStatus
+from baby.audit import audit_log, task_created_event_id
+from baby.core import AuditEventType, Task, TaskId, TaskRecord, TaskStatus
 from baby.errors import (
     ApprovalExpiredError,
     IdempotencyConflictError,
     InvalidStateTransitionError,
     TaskNotFoundError,
 )
+from baby.logging import get_logger
 from baby.observability.redaction import redact_sensitive_data
 from baby.observability.tasks import task_tracker
 
 router = APIRouter(tags=["Tasks"])
+logger = get_logger(__name__)
 
 # Visible ASCII, 1..255 characters (e.g. a UUID). Anything else is rejected with 422.
 IDEMPOTENCY_KEY_PATTERN = re.compile(r"[\x21-\x7e]{1,255}")
@@ -146,7 +148,60 @@ def _get_scoped_task(task_id: UUID, caller: AuthenticatedCaller):  # type: ignor
     return record
 
 
-@router.post("/tasks/submit", status_code=status.HTTP_202_ACCEPTED, response_model=TaskSubmitResponse)
+def _record_task_created(
+    record: TaskRecord, engagement_id: str, caller: AuthenticatedCaller, keyed: bool, replayed: bool
+) -> None:
+    """Write the task's ``TASK_CREATED`` event exactly once, or fail the request truthfully.
+
+    The task row is committed before this runs, so an audit failure cannot undo it. The event
+    has a deterministic ID: an idempotent replay re-attempts it, and recovers it if the original
+    write failed, without ever producing a second event.
+    """
+    details: Dict[str, Any] = {
+        "source": "api",
+        "submitted_by": caller.caller_id,
+        "priority": record.priority,
+        "idempotency_key_used": keyed,
+    }
+    try:
+        written = audit_log.record_once(
+            task_created_event_id(record.task_id),
+            AuditEventType.TASK_CREATED,
+            task_id=record.task_id,
+            user_id=engagement_id,
+            details={**details, "recovered_on_replay": True} if replayed else details,
+        )
+    except Exception as exc:
+        logger.error(
+            "TASK_CREATED audit write failed",
+            extra={"task_id": str(record.task_id), "error_type": type(exc).__name__},
+        )
+        retry_hint = (
+            "retry the same request with the same Idempotency-Key to record it (no duplicate task is created)"
+            if keyed
+            else "do not resubmit, the task already exists"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Task {record.task_id} was created but its audit record could not be written; {retry_hint}",
+        )
+    if written is not None and replayed:
+        logger.warning("Recovered missing TASK_CREATED audit event on replay", extra={"task_id": str(record.task_id)})
+
+
+@router.post(
+    "/tasks/submit",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=TaskSubmitResponse,
+    responses={
+        503: {
+            "description": (
+                "The task was persisted but its TASK_CREATED audit event could not be written. "
+                "Retrying with the same Idempotency-Key returns the same task and records the event once."
+            )
+        }
+    },
+)
 def submit_task(
     body: TaskSubmission,
     response: Response,
@@ -198,18 +253,7 @@ def submit_task(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     if replayed:
         response.headers["Idempotent-Replayed"] = "true"
-    else:
-        audit_log.record(
-            AuditEventType.TASK_CREATED,
-            task_id=record.task_id,
-            user_id=effective,
-            details={
-                "source": "api",
-                "submitted_by": caller.caller_id,
-                "priority": record.priority,
-                "idempotency_key_used": idempotency_key is not None,
-            },
-        )
+    _record_task_created(record, effective, caller, idempotency_key is not None, replayed)
     return {
         "task_id": str(record.task_id),
         "status": record.status.value,

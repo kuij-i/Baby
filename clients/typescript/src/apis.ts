@@ -5,7 +5,7 @@
  * - ObservabilityApi: health, readiness, metrics, audit, agents
  */
 
-import { HttpTransport } from "./transport.js";
+import { HttpTransport, type RequestOptions } from "./transport.js";
 import type {
   AgentView,
   ApprovalDecision,
@@ -28,6 +28,17 @@ export interface ListTasksOptions {
   engagementId?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface SubmitTaskOptions {
+  /**
+   * Optional `Idempotency-Key` header (1-255 visible ASCII characters, e.g. a UUID).
+   * Reusing the key with an identical submission returns the original task
+   * (`replayed: true`) instead of creating a duplicate; a different submission
+   * with the same key fails with `ConflictError` (409). Sent only as a header,
+   * never in the URL or body.
+   */
+  idempotencyKey?: string;
 }
 
 export interface ListWorkersOptions {
@@ -65,12 +76,18 @@ export class TasksApi {
     return this.transport.request<TaskView>(`${this.prefix}/tasks/${taskId}`);
   }
 
-  /** Durably enqueue a task for asynchronous execution by worker processes. */
-  async submit(submission: TaskSubmission): Promise<TaskSubmitResponse> {
-    return this.transport.request<TaskSubmitResponse>(`${this.prefix}/tasks/submit`, {
-      method: "POST",
-      body: submission,
-    });
+  /**
+   * Durably enqueue a task for asynchronous execution by worker processes.
+   *
+   * Pass `options.idempotencyKey` to make retries of the same submission safe.
+   * The client itself never retries a submission.
+   */
+  async submit(submission: TaskSubmission, options: SubmitTaskOptions = {}): Promise<TaskSubmitResponse> {
+    const request: RequestOptions = { method: "POST", body: submission };
+    if (options.idempotencyKey !== undefined) {
+      request.headers = { "Idempotency-Key": options.idempotencyKey };
+    }
+    return this.transport.request<TaskSubmitResponse>(`${this.prefix}/tasks/submit`, request);
   }
 
   /** Cancel an in-progress or pending task. */

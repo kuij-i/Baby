@@ -30,8 +30,57 @@ class SQLiteAuditLog:
         details: Optional[dict[str, Any]] = None,
     ) -> AuditEvent:
         """Record an audit event durably in SQLite."""
-        event = AuditEvent(
-            id=uuid4(),
+        event = self._event(uuid4(), event_type, task_id, agent_id, user_id, details)
+        with self._db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO audit_events (id, event_type, task_id, agent_id, user_id, timestamp, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?);
+                """,
+                self._row(event),
+            )
+        return event
+
+    def record_once(
+        self,
+        event_id: UUID,
+        event_type: AuditEventType,
+        task_id: Optional[TaskId] = None,
+        agent_id: Optional[AgentId] = None,
+        user_id: Optional[str] = None,
+        details: Optional[dict[str, Any]] = None,
+    ) -> Optional[AuditEvent]:
+        """Record an event with a fixed ID unless it already exists (``ON CONFLICT(id) DO NOTHING``).
+
+        Returns the new event, or None if an event with ``event_id`` is already stored.
+        Safe across processes: the primary key guarantees a single row. Only a conflict on the
+        primary key is ignored; any other failure (including other constraint violations, which
+        ``INSERT OR IGNORE`` would silently swallow) raises.
+        """
+        event = self._event(event_id, event_type, task_id, agent_id, user_id, details)
+        with self._db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO audit_events (id, event_type, task_id, agent_id, user_id, timestamp, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING;
+                """,
+                self._row(event),
+            )
+            inserted = cursor.rowcount == 1
+        return event if inserted else None
+
+    @staticmethod
+    def _event(
+        event_id: UUID,
+        event_type: AuditEventType,
+        task_id: Optional[TaskId],
+        agent_id: Optional[AgentId],
+        user_id: Optional[str],
+        details: Optional[dict[str, Any]],
+    ) -> AuditEvent:
+        return AuditEvent(
+            id=event_id,
             event_type=event_type,
             task_id=task_id,
             agent_id=agent_id,
@@ -40,29 +89,17 @@ class SQLiteAuditLog:
             details=details or {},
         )
 
-        task_id_str = str(task_id) if task_id else None
-        agent_id_str = str(agent_id) if agent_id else None
-        details_json = json.dumps(event.details, default=str)
-        timestamp_str = event.timestamp.isoformat()
-
-        with self._db.transaction() as conn:
-            conn.execute(
-                """
-                INSERT INTO audit_events (id, event_type, task_id, agent_id, user_id, timestamp, details)
-                VALUES (?, ?, ?, ?, ?, ?, ?);
-                """,
-                (
-                    str(event.id),
-                    str(event.event_type),
-                    task_id_str,
-                    agent_id_str,
-                    user_id,
-                    timestamp_str,
-                    details_json,
-                ),
-            )
-
-        return event
+    @staticmethod
+    def _row(event: AuditEvent) -> tuple:
+        return (
+            str(event.id),
+            str(event.event_type),
+            str(event.task_id) if event.task_id else None,
+            str(event.agent_id) if event.agent_id else None,
+            event.user_id,
+            event.timestamp.isoformat(),
+            json.dumps(event.details, default=str),
+        )
 
     def _build_query(
         self,

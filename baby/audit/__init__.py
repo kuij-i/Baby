@@ -8,10 +8,24 @@ The API lifespan and every worker process attach the SQLite backend when
 visible through the API.
 """
 
+import threading
 from datetime import datetime
 from typing import Any, Optional, Protocol
+from uuid import UUID, uuid5
 
 from baby.core import AgentId, AuditEvent, AuditEventType, TaskId
+
+# Namespace for deterministic audit event IDs (events that must be recorded exactly once).
+_AUDIT_EVENT_NAMESPACE = UUID("6f1d2c3e-9a4b-5c7d-8e0f-1a2b3c4d5e6f")
+
+
+def task_created_event_id(task_id: TaskId) -> UUID:
+    """Deterministic ID of a task's ``TASK_CREATED`` event, so it can be written at most once.
+
+    Lets an idempotent retry re-attempt a creation audit event that failed to write
+    without ever producing a second one.
+    """
+    return uuid5(_AUDIT_EVENT_NAMESPACE, f"task_created:{task_id}")
 
 
 class AuditBackend(Protocol):
@@ -25,6 +39,16 @@ class AuditBackend(Protocol):
         user_id: Optional[str] = None,
         details: Optional[dict[str, Any]] = None,
     ) -> AuditEvent: ...
+
+    def record_once(
+        self,
+        event_id: UUID,
+        event_type: AuditEventType,
+        task_id: Optional[TaskId] = None,
+        agent_id: Optional[AgentId] = None,
+        user_id: Optional[str] = None,
+        details: Optional[dict[str, Any]] = None,
+    ) -> Optional[AuditEvent]: ...
 
     def get_events(
         self,
@@ -57,6 +81,7 @@ class AuditLog:
     def __init__(self) -> None:
         self._events: list[AuditEvent] = []
         self._backend: Optional[AuditBackend] = None
+        self._lock = threading.Lock()
 
     @property
     def backend(self) -> Optional[AuditBackend]:
@@ -91,6 +116,38 @@ class AuditLog:
         )
         self._events.append(event)
         return event
+
+    def record_once(
+        self,
+        event_id: UUID,
+        event_type: AuditEventType,
+        task_id: Optional[TaskId] = None,
+        agent_id: Optional[AgentId] = None,
+        user_id: Optional[str] = None,
+        details: Optional[dict[str, Any]] = None,
+    ) -> Optional[AuditEvent]:
+        """Record an event with a fixed ``event_id`` unless one with that ID already exists.
+
+        Returns the new event, or None if it was already recorded (nothing is written).
+        Raises if the write fails, so callers can never mistake a failure for success.
+        """
+        if self._backend is not None:
+            return self._backend.record_once(
+                event_id, event_type, task_id=task_id, agent_id=agent_id, user_id=user_id, details=details
+            )
+        with self._lock:
+            if any(event.id == event_id for event in self._events):
+                return None
+            event = AuditEvent(
+                id=event_id,
+                event_type=event_type,
+                task_id=task_id,
+                agent_id=agent_id,
+                user_id=user_id,
+                details=details or {},
+            )
+            self._events.append(event)
+            return event
 
     def _filter_events(
         self,
@@ -201,4 +258,5 @@ __all__ = [
     "AuditBackend",
     "AuditLog",
     "audit_log",
+    "task_created_event_id",
 ]
