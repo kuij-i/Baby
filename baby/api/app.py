@@ -54,9 +54,12 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     # Import here to avoid circular imports at module load time
     from baby.configuration import settings
     from baby.core import WorkerStatus
+    from baby.logging import configure_logging
     from baby.observability.tasks import task_tracker
     from baby.observability.workers import worker_tracker
     from baby.persistence.database import db_manager
+
+    configure_logging(settings.log_level)
 
     # 1. Validate configuration at startup — fail fast on critical misconfigurations
     _validate_startup_configuration(settings)
@@ -206,3 +209,15 @@ v1_router.include_router(workers.router)
 v1_router.include_router(agents.router)
 v1_router.include_router(audit.router)
 app.include_router(v1_router)
+
+
+@app.get("/", include_in_schema=False)
+def root() -> dict:
+    """Static landing response so the server root is not a bare 404. Exposes no state."""
+    return {
+        "name": "BABY Observability API",
+        "version": app.version,
+        "api": "/api/v1",
+        "health": "/api/v1/health",
+        "docs": "/docs",
+    }

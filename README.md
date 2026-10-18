@@ -122,7 +122,7 @@ tests/                   # Test suite
 Baby is designed for local, self-contained deployment with zero external broker or database daemon dependencies. The single source of truth for task queueing, state transitions, leases, audit logs, and agent memory is local SQLite with Write-Ahead Logging (WAL).
 
 ### System Prerequisites
-- **Python**: 3.10, 3.11, or 3.12 (standard library includes `sqlite3`)
+- **Python**: 3.10, 3.11, 3.12 or 3.13 (standard library includes `sqlite3`)
 - **Node.js** (Optional, for TypeScript client): Node >= 20.0 and npm >= 9.0 to use it; Node >= 22.6 to run its tests
 - **Operating Systems Supported**: Windows (10/11/Server), Linux (Ubuntu, Debian, Fedora, Arch), macOS (12+)
 - **External Dependencies**: None required (No Docker, Redis, Celery, PostgreSQL, or cloud infrastructure needed)
@@ -196,7 +196,8 @@ Open `.env` in your text editor to configure settings:
    `python -m baby.workers run` refuses to start (exit code 2) if it is unset, missing, not a directory, inside a
    `.git` directory, or contains Baby's database or `.env` file. Use a directory beside Baby's data, not above it.
 4. **Database URL**:
-   Defaults to `sqlite:///baby.db`. Parent directories are automatically created on first boot. The database automatically initializes in WAL mode with busy timeout handling.
+   Defaults to `sqlite:///./baby.db`, i.e. `baby.db` in the directory you start the API/workers from — start
+   both from the same directory (or use an absolute path) so they share one database. Parent directories are automatically created on first boot. The database automatically initializes in WAL mode with busy timeout handling.
 
 ---
 
@@ -232,39 +233,59 @@ WORKER_ENABLED=true uvicorn baby.api.app:app --host 127.0.0.1 --port 8000
 
 ### First-Run Verification Walkthrough
 
-Once running, verify your installation using `curl`:
+Once running, verify your installation using `curl`. Authenticated endpoints need the operator token from
+`.env` (bash shown; in PowerShell use `$env:TOKEN = "<API_AUTH_TOKEN>"` and `curl.exe`):
 
-1. **Check System Health:**
+```bash
+TOKEN=<API_AUTH_TOKEN from .env>
+```
+
+1. **Open the server root** (no auth; static links to the API and the interactive docs at `/docs`):
+   ```bash
+   curl -s http://127.0.0.1:8000/
+   # Response: {"name":"BABY Observability API","version":"0.1.0","api":"/api/v1",...}
+   ```
+
+2. **Check System Health:**
    ```bash
    curl -s http://127.0.0.1:8000/api/v1/health
-   # Response: {"status":"healthy","version":"0.1.0","checks":{...}}
+   # Response: {"status":"healthy"|"degraded","version":"0.1.0","components":{...}}
    ```
+   `agents` is healthy once a worker process is running; `providers` stays `degraded` until `OPENAI_API_KEY`
+   is set, so the overall status is `degraded` without a model provider. That is expected.
 
-2. **Check System Readiness:**
+3. **Check System Readiness:**
    ```bash
-   curl -s http://127.0.0.1:8000/api/v1/readiness
-   # Response: {"status":"ready","database_connected":true,...}
+   curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/readiness
+   # Response: {"ready":true,"status":"ready","issues":[],"details":{...,"workers":{"live_worker_processes":2,...}}}
    ```
 
-3. **Check Worker Status:**
+4. **Check Worker Status:**
    ```bash
    python -m baby.workers status
    # Or via API:
-   curl -s http://127.0.0.1:8000/api/v1/workers
+   curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/workers
    ```
 
-4. **Submit a Safe Task:**
+5. **Submit a Safe Task** (`title` and `description` are required; `priority` is 0–10):
    ```bash
    curl -s -X POST http://127.0.0.1:8000/api/v1/tasks/submit \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"description":"Test first-run verification","priority":5}'
-   # Response: {"task_id":"task-...","status":"PENDING",...}
+     -d '{"title":"First run","description":"list files","priority":5}'
+   # Response (202): {"task_id":"...","status":"pending","engagement_id":"default","replayed":false}
    ```
+   An operator with exactly one engagement in `OPERATOR_ENGAGEMENTS` submits into it automatically. The admin
+   token and development mode (no auth) can act on any engagement, so they must name one: add
+   `"engagement_id":"default"` to the body (or an `X-Engagement-ID` header), otherwise the API answers `422`.
 
-5. **Track Task Completion:**
+6. **Track Task Completion:**
    ```bash
-   curl -s http://127.0.0.1:8000/api/v1/tasks/<task_id>
+   curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/tasks/<task_id>
    ```
+   `"list files"` completes without a model provider and returns the files under `CODING_REPO_ROOT`. Any other
+   description fails with `No model provider is configured` until `OPENAI_API_KEY` is set (see below), and a
+   task with `priority` ≥ 8 waits in `awaiting_approval` until an admin approves it (see *Approval Lifecycle*).
 
 ---
 
@@ -313,6 +334,7 @@ Baby uses SQLite with WAL mode (`baby.db`, `baby.db-wal`, `baby.db-shm`).
 | `ConfigurationError: api_... is a placeholder value` / `must be at least 32 characters` / `must be different` | API token fails the credential policy. | Generate a unique token per role with `python -c "import secrets; print(secrets.token_hex(24))"`. |
 | `Configuration error: Coding repository root ...` (workers exit 2) | `CODING_REPO_ROOT` unset, invalid, or contains Baby's database/`.env`. | Point `CODING_REPO_ROOT` at a separate project directory. |
 | `HTTP 403 Forbidden` | Operator attempted admin action (e.g. approval) or used an unpermitted engagement. | Supply the `API_ADMIN_TOKEN` or verify `OPERATOR_ENGAGEMENTS` in `.env`. |
+| `HTTP 422` on `/tasks/submit` | Missing `title`/`description`, or an admin/development-mode caller did not name an engagement. | Send both fields; add `"engagement_id":"default"` when using the admin token or development mode. |
 | `HTTP 405 Method Not Allowed` on `/tasks` | Direct `POST /tasks` is intentionally disabled to prevent bypass of queue. | Submit tasks to `/api/v1/tasks/submit`. |
 | Port 8000 already in use | Another service is using port 8000. | Run with `--port 8080` (or another free port). |
 | `OperationalError: database is locked` | High concurrency without WAL mode. | Baby enforces WAL mode by default; ensure your filesystem supports POSIX locks (avoid remote SMB mounts for the SQLite DB). |
@@ -390,17 +412,17 @@ pip install -e .[dev]
 ### Testing
 
 ```bash
-# Run all tests
-pytest
+# Run all tests (python -m uses the interpreter that has Baby installed)
+python -m pytest
 
-# Run with coverage
-pytest --cov=baby tests/
+# Run with coverage, as CI does
+python -m pytest --cov=baby --cov-fail-under=90 tests/
 
 # Run specific test file
-pytest tests/test_contracts.py
+python -m pytest tests/test_contracts.py
 
 # Run a single test
-pytest tests/test_contracts.py::TestTaskId::test_task_id_creation
+python -m pytest tests/test_contracts.py::TestTaskId::test_task_id_creation
 ```
 
 ### Running the observability API and workers
@@ -485,6 +507,7 @@ cd clients/typescript && npm ci && npm test
 - [x] PHASE 14: End-to-end integration and reliability
 - [x] PHASE 15: Installation, deployment & first-run experience
 - [x] PHASE 16: Security and operational hardening
+- [x] PHASE 17: Credential policy, approval expiry, CI matrix, idempotent submission
 - [ ] Next: Verification layer, multi-step planning, UI, additional specialist teams
 
 ## Security
@@ -500,4 +523,4 @@ Baby is designed with security as a core principle:
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

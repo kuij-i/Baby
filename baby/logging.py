@@ -1,37 +1,59 @@
 """Structured logging for BABY."""
 
 import logging
+import sys
 from typing import Any, Optional
 
 import structlog
 
+VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def resolve_log_level(level: str) -> int:
+    """Map a level name to its ``logging`` constant; unknown names fall back to INFO."""
+    name = (level or "").strip().upper()
+    return getattr(logging, name) if name in VALID_LOG_LEVELS else logging.INFO
+
+
+class _StderrLogger:
+    """Writes each rendered event to the *current* ``sys.stderr`` (which test runners and
+    supervisors may replace after logging is configured)."""
+
+    def msg(self, message: str) -> None:
+        print(message, file=sys.stderr, flush=True)
+
+    debug = info = warning = warn = error = critical = exception = fatal = log = msg
+
+
+def _stderr_logger_factory(*args: Any) -> _StderrLogger:
+    return _StderrLogger()
+
 
 def configure_logging(level: str = "INFO") -> None:
-    """Configure structured logging.
+    """Configure structured logging for the current process.
+
+    Events below ``level`` are dropped; the rest are written to stderr as one line each
+    (timestamp, level, message, key=value context). Safe to call more than once.
 
     Args:
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     """
+    numeric_level = resolve_log_level(level)
     structlog.configure(
         processors=[
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-            structlog.processors.JSONRenderer(),
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=True),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.dev.ConsoleRenderer(colors=False),
         ],
+        wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
         context_class=dict,
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        cache_logger_on_first_use=True,
+        logger_factory=_stderr_logger_factory,
+        cache_logger_on_first_use=False,
     )
-
-    formatter = structlog.stdlib.ProcessorFormatter(
-        processor=structlog.processors.JSONRenderer(),
-    )
-
-    handler = logging.StreamHandler()
-    handler.setFormatter(formatter)
-
-    root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
-    root_logger.setLevel(level.upper())
+    logging.getLogger().setLevel(numeric_level)
 
 
 class Logger:

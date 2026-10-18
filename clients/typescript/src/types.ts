@@ -24,7 +24,7 @@ export interface AgentResultView {
   output?: unknown;
   error?: string | null;
   execution_time_ms?: number;
-  tokens_used?: number | string | null;
+  tokens_used?: number | null;
   timestamp: string;
 }
 

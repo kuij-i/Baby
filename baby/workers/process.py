@@ -87,7 +87,7 @@ def _run(config: WorkerProcessConfig, stop_event: Any) -> int:
     from baby.audit import audit_log
     from baby.configuration import settings, validate_settings
     from baby.errors import ConfigurationError
-    from baby.logging import get_logger
+    from baby.logging import configure_logging, get_logger
     from baby.persistence.database import db_manager
     from baby.persistence.sqlite_audit import SQLiteAuditLog
     from baby.workers.bootstrap import resolve_bootstrap
@@ -102,6 +102,7 @@ def _run(config: WorkerProcessConfig, stop_event: Any) -> int:
             if key not in FORWARDABLE_SETTINGS:
                 raise ConfigurationError(f"Setting '{key}' cannot be forwarded to worker processes")
             setattr(settings, key, value)
+        configure_logging(settings.log_level)
         validate_settings(settings)
         if settings.persistence_backend != "sqlite":
             raise ConfigurationError("Worker processes require persistence_backend='sqlite'")

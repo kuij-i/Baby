@@ -46,6 +46,29 @@ class SystemHealth(BaseModel):
     components: Dict[str, ComponentHealth] = Field(default_factory=dict)
 
 
+_LIVE_WORKER_STATUSES = {"starting", "idle", "busy", "stopping"}
+
+
+def count_live_durable_workers() -> int:
+    """Count durable worker processes with a live status and a heartbeat within the stale timeout."""
+    from datetime import timedelta
+
+    from baby.configuration import settings
+    from baby.observability.tasks import task_tracker
+    from baby.persistence.sqlite_workers import SQLiteWorkerStore
+
+    store = task_tracker.store
+    if store is None:
+        return 0
+    cutoff = utc_now() - timedelta(seconds=settings.worker_stale_timeout_seconds)
+    try:
+        workers = SQLiteWorkerStore(store.db).list()
+    except Exception as exc:
+        logger.warning("Could not read durable worker registry", error=str(exc))
+        return 0
+    return sum(1 for w in workers if w.status.value in _LIVE_WORKER_STATUSES and w.last_heartbeat_at >= cutoff)
+
+
 class HealthChecker:
     """Performs read-only health inspection of all BABY subsystems."""
 
@@ -88,10 +111,19 @@ class HealthChecker:
             agents = agent_registry.list_agents()
             enabled_agents = [a for a in agents if a.spec.enabled]
             if not agents:
+                # In the split deployment the API registers no agents: they run inside the
+                # durable worker processes, so a live worker means agents are available.
+                live_workers = count_live_durable_workers()
+                if live_workers:
+                    return ComponentHealth(
+                        status=HealthStatus.HEALTHY,
+                        message=f"Agents run in {live_workers} live worker process(es)",
+                        details={"registered_count": 0, "enabled_count": 0, "live_worker_processes": live_workers},
+                    )
                 return ComponentHealth(
                     status=HealthStatus.DEGRADED,
-                    message="No agents registered",
-                    details={"registered_count": 0, "enabled_count": 0},
+                    message="No agents registered and no live worker processes",
+                    details={"registered_count": 0, "enabled_count": 0, "live_worker_processes": 0},
                 )
             if not enabled_agents:
                 return ComponentHealth(

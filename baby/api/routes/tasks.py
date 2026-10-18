@@ -39,6 +39,9 @@ from baby.observability.redaction import redact_sensitive_data
 from baby.observability.tasks import task_tracker
 
 router = APIRouter(tags=["Tasks"])
+# Starlette renamed HTTP_422_UNPROCESSABLE_ENTITY (deprecated) to HTTP_422_UNPROCESSABLE_CONTENT;
+# the literal works with every supported version.
+HTTP_422_UNPROCESSABLE = 422
 logger = get_logger(__name__)
 
 # Visible ASCII, 1..255 characters (e.g. a UUID). Anything else is rejected with 422.
@@ -230,7 +233,7 @@ def submit_task(
     effective = caller.restrict_to_engagement(body.engagement_id or x_engagement_id)
     if effective is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=HTTP_422_UNPROCESSABLE,
             detail="An engagement_id within the caller's authorized scope is required",
         )
     task = Task(title=body.title, description=body.description, priority=body.priority, user_id=effective)
@@ -241,7 +244,7 @@ def submit_task(
     else:
         if not IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=HTTP_422_UNPROCESSABLE,
                 detail="Idempotency-Key must be 1-255 visible ASCII characters",
             )
         from baby.workers.queue import IdempotencyScope

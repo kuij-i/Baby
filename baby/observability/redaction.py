@@ -32,6 +32,16 @@ SENSITIVE_KEY_PATTERNS: Set[str] = {
     "session_id",
 }
 
+# Keys that match a sensitive pattern by substring but only ever hold usage counters
+# (e.g. ``AgentResult.tokens_used``); redacting them would break the typed API contract.
+NON_SENSITIVE_KEYS: Set[str] = {
+    "tokens_used",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "max_tokens",
+}
+
 # Regex to detect API keys or bearer tokens in arbitrary strings
 SECRET_STRING_PATTERNS = [
     re.compile(r"(sk-[a-zA-Z0-9_\-]{20,})", re.IGNORECASE),
@@ -46,6 +56,8 @@ REDACTED_VALUE = "[REDACTED]"
 def _is_sensitive_key(key: str) -> bool:
     """Check if a dictionary key indicates sensitive data."""
     normalized = key.lower().replace("-", "_").strip()
+    if normalized in NON_SENSITIVE_KEYS:
+        return False
     if normalized in SENSITIVE_KEY_PATTERNS:
         return True
     return any(pattern in normalized for pattern in SENSITIVE_KEY_PATTERNS)
