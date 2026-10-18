@@ -49,8 +49,6 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         4. Log clean shutdown
     """
     # ---- STARTUP ----
-    logger.info("BABY observability API starting up")
-
     # Import here to avoid circular imports at module load time
     from baby.configuration import settings
     from baby.core import WorkerStatus
@@ -60,6 +58,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     from baby.persistence.database import db_manager
 
     configure_logging(settings.log_level)
+    logger.info("BABY observability API starting up")
 
     # 1. Validate configuration at startup — fail fast on critical misconfigurations
     _validate_startup_configuration(settings)
