@@ -1,6 +1,6 @@
 """Provider registry for model provider lookup and management."""
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from baby.errors import ConfigurationError
 from baby.logging import get_logger
@@ -91,20 +91,54 @@ class ProviderRegistry:
 provider_registry = ProviderRegistry()
 
 
-def register_configured_providers(registry: Optional[ProviderRegistry] = None) -> List[str]:
-    """Register the model providers whose credentials are configured; return their names.
+def active_provider_name(cfg: Optional[Any] = None) -> Optional[str]:
+    """Name of the provider workers should use (``"nvidia"``/``"openai"``), or None if none is configured.
 
-    Today this is the OpenAI-compatible provider (``OPENAI_API_KEY``, optional
-    ``OPENAI_BASE_URL`` and ``DEFAULT_MODEL``). Without credentials nothing is registered
-    and agents fall back to their provider-less behaviour. Idempotent.
+    ``model_provider="auto"`` prefers NVIDIA when ``NVIDIA_API_KEY`` is set, then OpenAI when
+    ``OPENAI_API_KEY`` is set. An explicit choice is honoured only if its key is configured.
     """
+    from baby.configuration import settings
+
+    cfg = cfg or settings
+    has_nvidia = bool((cfg.nvidia_api_key or "").strip())
+    has_openai = bool((cfg.openai_api_key or "").strip())
+    choice = (cfg.model_provider or "auto").strip().lower()
+    if choice == "nvidia":
+        return "nvidia" if has_nvidia else None
+    if choice == "openai":
+        return "openai" if has_openai else None
+    if has_nvidia:
+        return "nvidia"
+    if has_openai:
+        return "openai"
+    return None
+
+
+def configured_model(cfg: Optional[Any] = None) -> str:
+    """Model identifier agents should request from the active provider."""
+    from baby.configuration import settings
+
+    cfg = cfg or settings
+    return str(cfg.nvidia_model if active_provider_name(cfg) == "nvidia" else cfg.default_model)
+
+
+def register_configured_providers(registry: Optional[ProviderRegistry] = None) -> List[str]:
+    """Register the model provider selected by configuration; return the registered names.
+
+    The NVIDIA provider (``NVIDIA_API_KEY``, optional ``NVIDIA_BASE_URL`` / ``NVIDIA_MODEL``)
+    or the OpenAI-compatible provider (``OPENAI_API_KEY``, optional ``OPENAI_BASE_URL`` /
+    ``DEFAULT_MODEL``), chosen by ``MODEL_PROVIDER`` (see ``active_provider_name``). Without
+    credentials nothing is registered and agents fall back to their provider-less behaviour.
+    Idempotent.
+    """
+    from baby.providers.nvidia_provider import NvidiaProvider
     from baby.providers.openai_provider import OpenAIProvider
 
     registry = registry or provider_registry
-    registered: List[str] = []
-    provider = OpenAIProvider()
-    if provider.is_available():
-        if provider.name not in {p.name for p in registry.list_providers()}:
-            registry.register(provider, default=True)
-        registered.append(provider.name)
-    return registered
+    active = active_provider_name()
+    if active is None:
+        return []
+    provider: ModelProvider = NvidiaProvider() if active == "nvidia" else OpenAIProvider()
+    if provider.name not in {p.name for p in registry.list_providers()}:
+        registry.register(provider, default=True)
+    return [provider.name]

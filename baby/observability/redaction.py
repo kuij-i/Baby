@@ -21,6 +21,7 @@ SENSITIVE_KEY_PATTERNS: Set[str] = {
     "jwt",
     "openai_api_key",
     "anthropic_api_key",
+    "nvidia_api_key",
     "password",
     "passwd",
     "private_key",
@@ -47,6 +48,7 @@ SECRET_STRING_PATTERNS = [
     re.compile(r"(sk-[a-zA-Z0-9_\-]{20,})", re.IGNORECASE),
     re.compile(r"(Bearer\s+)[a-zA-Z0-9_\-\.]{15,}", re.IGNORECASE),
     re.compile(r"(ghp_[a-zA-Z0-9]{30,})", re.IGNORECASE),
+    re.compile(r"(nvapi-[a-zA-Z0-9_\-]{20,})", re.IGNORECASE),
     re.compile(r"([a-f0-9]{32,64})", re.IGNORECASE),  # Hex secrets (e.g. SHA/MD5 tokens)
 ]
 
@@ -72,6 +74,8 @@ def _sanitize_string(val: str) -> str:
     sanitized = re.sub(r"sk-[a-zA-Z0-9_\-]{20,}", REDACTED_VALUE, sanitized, flags=re.IGNORECASE)
     # Anthropic key regex
     sanitized = re.sub(r"sk-ant-[a-zA-Z0-9_\-]{20,}", REDACTED_VALUE, sanitized, flags=re.IGNORECASE)
+    # NVIDIA API key regex
+    sanitized = re.sub(r"nvapi-[a-zA-Z0-9_\-]{20,}", REDACTED_VALUE, sanitized, flags=re.IGNORECASE)
     # GitHub personal token regex
     sanitized = re.sub(r"ghp_[a-zA-Z0-9]{30,}", REDACTED_VALUE, sanitized, flags=re.IGNORECASE)
     return sanitized

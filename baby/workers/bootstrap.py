@@ -6,7 +6,8 @@ only the CodingAgent with exactly its declared permissions (LOCAL_READ = ALLOW,
 LOCAL_WRITE = APPROVAL_REQUIRED). No financial/trading, command execution, network or
 secret permissions are granted, so any tool requiring them is denied by the executor.
 
-A model provider is registered only when its credentials are configured (``OPENAI_API_KEY``);
+A model provider is registered only when its credentials are configured (``NVIDIA_API_KEY`` or
+``OPENAI_API_KEY``, chosen by ``MODEL_PROVIDER``);
 without one the CodingAgent runs explicit tool steps and "list files" requests and fails
 every other step explicitly instead of reporting it completed.
 

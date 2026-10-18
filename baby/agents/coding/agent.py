@@ -21,7 +21,7 @@ from baby.core import (
 from baby.errors import ApprovalRequiredError, PermissionDeniedError
 from baby.logging import get_logger
 from baby.providers.base import ModelProvider
-from baby.providers.registry import provider_registry
+from baby.providers.registry import configured_model, provider_registry
 from baby.providers.types import ChatMessage, ToolDefinition
 from baby.tools.base import Tool
 from baby.tools.coding.list_files import ListFilesTool
@@ -67,7 +67,7 @@ def create_default_coding_spec(agent_id: str = "coding-agent") -> AgentSpec:
         role="coding",
         capabilities=CODING_AGENT_CAPABILITIES,
         permissions=CODING_AGENT_PERMISSIONS,
-        model=settings.default_model,
+        model=configured_model(),
         enabled=True,
     )
 
@@ -459,7 +459,7 @@ class CodingAgent(Agent):
             agent_id=self.spec.id,
             success=False,
             error=(
-                "No model provider is configured (set OPENAI_API_KEY to enable the model-driven "
+                "No model provider is configured (set NVIDIA_API_KEY or OPENAI_API_KEY to enable the model-driven "
                 "CodingAgent). Without one only explicit tool steps and 'list files' requests can run; "
                 "nothing was executed for this step."
             ),

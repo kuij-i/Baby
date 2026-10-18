@@ -41,6 +41,11 @@ FORWARDABLE_SETTINGS = frozenset(
         "approval_ttl_seconds",
         "max_approval_rounds",
         "log_level",
+        "model_provider",
+        "default_model",
+        "openai_base_url",
+        "nvidia_base_url",
+        "nvidia_model",
     }
 )
 

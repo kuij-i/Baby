@@ -251,8 +251,8 @@ TOKEN=<API_AUTH_TOKEN from .env>
    curl -s http://127.0.0.1:8000/api/v1/health
    # Response: {"status":"healthy"|"degraded","version":"0.1.0","components":{...}}
    ```
-   `agents` is healthy once a worker process is running; `providers` stays `degraded` until `OPENAI_API_KEY`
-   is set, so the overall status is `degraded` without a model provider. That is expected.
+   `agents` is healthy once a worker process is running; `providers` stays `degraded` until a model key
+   (`NVIDIA_API_KEY` or `OPENAI_API_KEY`) is set, so the overall status is `degraded` without one. That is expected.
 
 3. **Check System Readiness:**
    ```bash
@@ -284,7 +284,7 @@ TOKEN=<API_AUTH_TOKEN from .env>
    curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/tasks/<task_id>
    ```
    `"list files"` completes without a model provider and returns the files under `CODING_REPO_ROOT`. Any other
-   description fails with `No model provider is configured` until `OPENAI_API_KEY` is set (see below), and a
+   description fails with `No model provider is configured` until a model key is set (see below), and a
    task with `priority` ≥ 8 waits in `awaiting_approval` until an admin approves it (see *Approval Lifecycle*).
 
 ---
@@ -341,13 +341,37 @@ Baby uses SQLite with WAL mode (`baby.db`, `baby.db-wal`, `baby.db-shm`).
 
 ---
 
-### Model Provider (optional)
+### Model Provider (optional): NVIDIA or OpenAI
 
-Set `OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL` / `DEFAULT_MODEL` for OpenAI-compatible
-NVIDIA or local endpoints) to let workers run the CodingAgent's bounded model loop. Without a key,
+A model provider lets workers run the CodingAgent's bounded model loop (the model reads and lists
+files through the permission-checked tools; writes still need admin approval). Without a key,
 workers only run explicit tool steps and "list files" requests; any other task is recorded as
 **FAILED** with `No model provider is configured` — Baby never reports work as completed when
 nothing was executed.
+
+**NVIDIA (API Catalog or self-hosted NIM)**
+
+1. Create a free key at [build.nvidia.com](https://build.nvidia.com) (open any model → *Get API Key*;
+   keys start with `nvapi-`).
+2. Add it to `.env` — that is all that is required:
+   ```bash
+   NVIDIA_API_KEY=nvapi-...
+   # optional:
+   NVIDIA_MODEL=nvidia/nemotron-3-super-120b-a12b      # any NVIDIA chat model with tool calling
+   NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1 # or your NIM, e.g. http://localhost:8000/v1
+   ```
+3. Restart the API and the workers. `GET /api/v1/health` now shows `providers: healthy`, and a task such as
+   `{"title":"Explain","description":"What does main.py do?"}` is answered by the NVIDIA model.
+
+The model must support tool (function) calling; the CodingAgent sends its `list_files`, `read_file` and
+`write_file` tools with every request. If NVIDIA rejects the key or model, the task fails with
+`nvidia provider call failed: ...` (the key is never logged or returned).
+
+**OpenAI or another OpenAI-compatible server:** set `OPENAI_API_KEY` (optionally `OPENAI_BASE_URL` and
+`DEFAULT_MODEL`).
+
+**Choosing:** `MODEL_PROVIDER=auto` (default) uses NVIDIA when `NVIDIA_API_KEY` is set, otherwise OpenAI when
+`OPENAI_API_KEY` is set. Set `MODEL_PROVIDER=nvidia` or `MODEL_PROVIDER=openai` to force one.
 
 ### Idempotent Task Submission
 

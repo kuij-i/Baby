@@ -1,10 +1,11 @@
 """Model provider subsystem.
 
 Exports the abstract interface, shared types, the OpenAI-compatible
-concrete provider, and the global provider registry.
+and NVIDIA concrete providers, and the global provider registry.
 """
 
 from baby.providers.base import ModelProvider
+from baby.providers.nvidia_provider import NvidiaProvider
 from baby.providers.openai_provider import OpenAIProvider
 from baby.providers.registry import ProviderRegistry, provider_registry
 from baby.providers.types import (
@@ -17,6 +18,7 @@ from baby.providers.types import (
 __all__ = [
     "ChatMessage",
     "ModelProvider",
+    "NvidiaProvider",
     "OpenAIProvider",
     "ProviderRegistry",
     "ProviderResponse",

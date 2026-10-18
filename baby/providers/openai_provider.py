@@ -23,6 +23,14 @@ from baby.providers.types import (
 
 logger = get_logger(__name__)
 
+
+def _sanitize(text: str) -> str:
+    """Strip key-shaped secrets from provider error text before it reaches task results."""
+    from baby.observability.redaction import redact_sensitive_data
+
+    return str(redact_sensitive_data(text))
+
+
 # Default models that OpenAI-compatible endpoints commonly support
 _DEFAULT_MODELS = ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"]
 
@@ -96,8 +104,8 @@ class OpenAIProvider(ModelProvider):
             response = await client.chat.completions.create(**params)
             return self._parse_response(response, resolved_model)
         except Exception as exc:
-            logger.error("OpenAI provider call failed", model=resolved_model, error=str(exc))
-            raise ExecutionError(f"OpenAI provider call failed: {exc}") from exc
+            logger.error("Model provider call failed", provider=self.name, model=resolved_model, error=str(exc))
+            raise ExecutionError(f"{self.name} provider call failed: {_sanitize(str(exc))}") from exc
 
     async def complete_with_tools(
         self,
@@ -137,8 +145,8 @@ class OpenAIProvider(ModelProvider):
             response = await client.chat.completions.create(**params)
             return self._parse_response(response, resolved_model)
         except Exception as exc:
-            logger.error("OpenAI provider tool call failed", model=resolved_model, error=str(exc))
-            raise ExecutionError(f"OpenAI provider call failed: {exc}") from exc
+            logger.error("Model provider tool call failed", provider=self.name, model=resolved_model, error=str(exc))
+            raise ExecutionError(f"{self.name} provider call failed: {_sanitize(str(exc))}") from exc
 
     # -- Internal helpers ------------------------------------------------------
 
@@ -162,7 +170,9 @@ class OpenAIProvider(ModelProvider):
     def _to_api_message(msg: ChatMessage) -> Dict[str, Any]:
         """Convert a ChatMessage to the dict format expected by the OpenAI SDK."""
         d: Dict[str, Any] = {"role": msg.role, "content": msg.content}
-        if msg.name:
+        # ``name`` is not part of the tool-message schema; strict OpenAI-compatible servers
+        # (e.g. NVIDIA NIM) may reject it, and ``tool_call_id`` already identifies the call.
+        if msg.name and msg.role != "tool":
             d["name"] = msg.name
         if msg.tool_calls:
             d["tool_calls"] = msg.tool_calls
