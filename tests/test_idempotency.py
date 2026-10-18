@@ -10,6 +10,7 @@ without its task.
 import multiprocessing
 import sqlite3
 import threading
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
@@ -72,12 +73,12 @@ def _submit(client: TestClient, key: Optional[str], headers: Dict[str, str] = OP
 
 
 def _task_count(db_file: Path) -> int:
-    with sqlite3.connect(db_file) as conn:
+    with closing(sqlite3.connect(db_file)) as conn, conn:
         return int(conn.execute("SELECT COUNT(*) FROM task_records").fetchone()[0])
 
 
 def _key_rows(db_file: Path) -> List[sqlite3.Row]:
-    with sqlite3.connect(db_file) as conn:
+    with closing(sqlite3.connect(db_file)) as conn, conn:
         conn.row_factory = sqlite3.Row
         return list(conn.execute("SELECT * FROM task_idempotency_keys"))
 

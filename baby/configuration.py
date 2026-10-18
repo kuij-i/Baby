@@ -18,9 +18,16 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Model Configuration
-    default_model: str = "gpt-4"
+    # Which model provider workers use: "auto" picks NVIDIA when NVIDIA_API_KEY is set,
+    # otherwise OpenAI when OPENAI_API_KEY is set; "openai" / "nvidia" force one.
+    model_provider: str = "auto"
+    default_model: str = "gpt-4"  # model sent to the OpenAI-compatible provider
     openai_api_key: Optional[str] = None
-    openai_base_url: Optional[str] = None  # Override for NVIDIA/local endpoints
+    openai_base_url: Optional[str] = None  # Override for local / other OpenAI-compatible endpoints
+    # NVIDIA API Catalog (build.nvidia.com) or a self-hosted NIM; OpenAI-compatible.
+    nvidia_api_key: Optional[str] = None
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_model: str = "nvidia/nemotron-3-super-120b-a12b"  # must support tool calling
     anthropic_api_key: Optional[str] = None
 
     # Persistence & Database
@@ -141,6 +148,7 @@ def validate_settings(cfg: "Settings") -> list:
     _validate_worker_settings(cfg)
     _validate_approval_settings(cfg)
     _validate_api_auth_settings(cfg)
+    warnings.extend(_validate_model_provider_settings(cfg))
 
     # Persistence backend validation (fail-closed if durable persistence is misconfigured)
     if cfg.persistence_backend not in ("sqlite", "in_memory"):
@@ -179,6 +187,27 @@ def validate_settings(cfg: "Settings") -> list:
         warnings.append(f"Unrecognized audit_storage_type '{cfg.audit_storage_type}'; expected 'sqlite' or 'in_memory'")
 
     return warnings
+
+
+MODEL_PROVIDER_CHOICES = ("auto", "openai", "nvidia")
+
+
+def _validate_model_provider_settings(cfg: "Settings") -> list:
+    """Fail closed on an unknown provider choice; warn when the chosen provider has no key."""
+    from baby.errors import ConfigurationError
+
+    choice = (cfg.model_provider or "").strip().lower()
+    if choice not in MODEL_PROVIDER_CHOICES:
+        raise ConfigurationError(
+            f"model_provider must be one of {', '.join(MODEL_PROVIDER_CHOICES)}, got {cfg.model_provider!r}"
+        )
+    if choice == "nvidia" and not (cfg.nvidia_api_key or "").strip():
+        return ["model_provider='nvidia' but no NVIDIA key is configured; model-driven tasks will fail"]
+    if choice == "openai" and not (cfg.openai_api_key or "").strip():
+        return ["model_provider='openai' but no OpenAI key is configured; model-driven tasks will fail"]
+    if choice == "nvidia" and not (cfg.nvidia_model or "").strip():
+        raise ConfigurationError("model_provider='nvidia' requires a non-empty nvidia_model")
+    return []
 
 
 def _validate_approval_settings(cfg: "Settings") -> None:

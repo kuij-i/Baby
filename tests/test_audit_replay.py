@@ -13,6 +13,7 @@ Both audit backends (in-memory and SQLite) are covered.
 
 import sqlite3
 import threading
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 from unittest.mock import patch
@@ -89,7 +90,7 @@ class _AuditOutage:
 
     def start(self) -> "_AuditOutage":
         if self._backend == "sqlite":
-            with sqlite3.connect(self._db_file) as conn:
+            with closing(sqlite3.connect(self._db_file)) as conn, conn:
                 conn.execute(
                     "CREATE TRIGGER audit_outage BEFORE INSERT ON audit_events "
                     "BEGIN SELECT RAISE(ABORT, 'simulated audit storage failure'); END;"
@@ -101,7 +102,7 @@ class _AuditOutage:
 
     def heal(self) -> None:
         if self._backend == "sqlite":
-            with sqlite3.connect(self._db_file) as conn:
+            with closing(sqlite3.connect(self._db_file)) as conn, conn:
                 conn.execute("DROP TRIGGER audit_outage;")
         elif self._patch is not None:
             self._patch.stop()
@@ -122,7 +123,7 @@ def _submit(client: TestClient, key: Optional[str] = KEY, headers: Dict[str, str
 
 
 def _task_ids(db_file: Path) -> List[str]:
-    with sqlite3.connect(db_file) as conn:
+    with closing(sqlite3.connect(db_file)) as conn, conn:
         return [row[0] for row in conn.execute("SELECT task_id FROM task_records")]
 
 
@@ -283,17 +284,23 @@ class TestRecordOnce:
     def test_sqlite_record_once_raises_on_non_key_constraint_failure(self, tmp_path: Path):
         """Only a duplicate ID is "already recorded"; any other rejected insert must raise, never return None."""
         path = tmp_path / "constrained.db"
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             conn.execute(
                 "CREATE TABLE audit_events (id TEXT PRIMARY KEY, event_type TEXT NOT NULL, task_id TEXT, "
                 "agent_id TEXT, user_id TEXT, timestamp TEXT NOT NULL, "
                 "details TEXT NOT NULL CHECK (length(details) < 10))"
             )
         manager = DatabaseManager(f"sqlite:///{path}")
-        manager.init_schema()
-        task_id = TaskId()
-        with pytest.raises(sqlite3.IntegrityError):
-            SQLiteAuditLog(manager).record_once(
-                task_created_event_id(task_id), AuditEventType.TASK_CREATED, task_id=task_id, details={"x": "y" * 50}
-            )
-        assert SQLiteAuditLog(manager).get_events(task_id=task_id) == []
+        try:
+            manager.init_schema()
+            task_id = TaskId()
+            with pytest.raises(sqlite3.IntegrityError):
+                SQLiteAuditLog(manager).record_once(
+                    task_created_event_id(task_id),
+                    AuditEventType.TASK_CREATED,
+                    task_id=task_id,
+                    details={"x": "y" * 50},
+                )
+            assert SQLiteAuditLog(manager).get_events(task_id=task_id) == []
+        finally:
+            manager.close()

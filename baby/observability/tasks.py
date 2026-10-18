@@ -51,19 +51,26 @@ class TaskTracker:
 
     def __init__(self, task_store: Optional[SQLiteTaskStore] = None) -> None:
         self._lock = threading.Lock()
+        self._store_init_lock = threading.Lock()
         self._tasks: Dict[str, TaskRecord] = {}
 
-        # Initialize durable SQLite backing if enabled
-        if task_store is not None:
-            self._store: Optional[SQLiteTaskStore] = task_store
-        elif getattr(settings, "persistence_backend", "sqlite") == "sqlite":
-            try:
-                self._store = SQLiteTaskStore()
-            except Exception as exc:
-                logger.warning("Could not initialize SQLite task store; running in memory", error=str(exc))
-                self._store = None
-        else:
-            self._store = None
+        # The backend is chosen now, but the default SQLite store is opened on first use so
+        # that importing Baby (e.g. ``python -m baby.workers --help``) never creates a database.
+        self._store_instance: Optional[SQLiteTaskStore] = task_store
+        self._store_pending = task_store is None and getattr(settings, "persistence_backend", "sqlite") == "sqlite"
+
+    @property
+    def _store(self) -> Optional[SQLiteTaskStore]:
+        if self._store_pending:
+            with self._store_init_lock:
+                if self._store_pending:
+                    try:
+                        self._store_instance = SQLiteTaskStore()
+                    except Exception as exc:
+                        logger.warning("Could not initialize SQLite task store; running in memory", error=str(exc))
+                        self._store_instance = None
+                    self._store_pending = False
+        return self._store_instance
 
     @property
     def store(self) -> Optional[SQLiteTaskStore]:

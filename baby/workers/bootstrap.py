@@ -6,7 +6,8 @@ only the CodingAgent with exactly its declared permissions (LOCAL_READ = ALLOW,
 LOCAL_WRITE = APPROVAL_REQUIRED). No financial/trading, command execution, network or
 secret permissions are granted, so any tool requiring them is denied by the executor.
 
-A model provider is registered only when its credentials are configured (``OPENAI_API_KEY``);
+A model provider is registered only when its credentials are configured (``NVIDIA_API_KEY`` or
+``OPENAI_API_KEY``, chosen by ``MODEL_PROVIDER``);
 without one the CodingAgent runs explicit tool steps and "list files" requests and fails
 every other step explicitly instead of reporting it completed.
 
@@ -17,9 +18,12 @@ with broken or over-broad coding tools.
 """
 
 import importlib
-from typing import Callable
+from typing import TYPE_CHECKING, Callable, List
 
 from baby.errors import ConfigurationError
+
+if TYPE_CHECKING:
+    from baby.core import AgentSpec
 
 DEFAULT_BOOTSTRAP = "baby.workers.bootstrap:default_bootstrap"
 
@@ -41,6 +45,13 @@ def default_bootstrap() -> None:
     for permission in spec.permissions:
         permission_manager.revoke_permission(agent_id, permission.category)
         permission_manager.grant_permission(agent_id, permission)
+
+
+def default_agent_specs() -> "List[AgentSpec]":
+    """Specs of the agents ``default_bootstrap`` registers, for read-only visibility outside workers."""
+    from baby.agents.coding import create_default_coding_spec
+
+    return [create_default_coding_spec()]
 
 
 def resolve_bootstrap(path: str) -> Callable[[], None]:

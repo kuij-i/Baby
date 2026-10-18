@@ -19,7 +19,7 @@ from fastapi import APIRouter, Response, status
 
 from baby.api.schemas import ReadinessResponse
 from baby.configuration import settings, validate_settings
-from baby.observability.health import HealthStatus, health_checker
+from baby.observability.health import HealthStatus, count_live_durable_workers, health_checker
 from baby.observability.workers import worker_tracker
 
 router = APIRouter(tags=["Readiness"])
@@ -51,6 +51,7 @@ def _check_system_readiness() -> tuple[bool, List[str], Dict[str, Any]]:
         workers = worker_tracker.list_workers()
         details["workers"] = {
             "total": len(workers),
+            "live_worker_processes": count_live_durable_workers(),
             "status": "operational",
         }
     except Exception:

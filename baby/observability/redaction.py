@@ -21,6 +21,7 @@ SENSITIVE_KEY_PATTERNS: Set[str] = {
     "jwt",
     "openai_api_key",
     "anthropic_api_key",
+    "nvidia_api_key",
     "password",
     "passwd",
     "private_key",
@@ -32,11 +33,22 @@ SENSITIVE_KEY_PATTERNS: Set[str] = {
     "session_id",
 }
 
+# Keys that match a sensitive pattern by substring but only ever hold usage counters
+# (e.g. ``AgentResult.tokens_used``); redacting them would break the typed API contract.
+NON_SENSITIVE_KEYS: Set[str] = {
+    "tokens_used",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "max_tokens",
+}
+
 # Regex to detect API keys or bearer tokens in arbitrary strings
 SECRET_STRING_PATTERNS = [
     re.compile(r"(sk-[a-zA-Z0-9_\-]{20,})", re.IGNORECASE),
     re.compile(r"(Bearer\s+)[a-zA-Z0-9_\-\.]{15,}", re.IGNORECASE),
     re.compile(r"(ghp_[a-zA-Z0-9]{30,})", re.IGNORECASE),
+    re.compile(r"(nvapi-[a-zA-Z0-9_\-]{20,})", re.IGNORECASE),
     re.compile(r"([a-f0-9]{32,64})", re.IGNORECASE),  # Hex secrets (e.g. SHA/MD5 tokens)
 ]
 
@@ -46,6 +58,8 @@ REDACTED_VALUE = "[REDACTED]"
 def _is_sensitive_key(key: str) -> bool:
     """Check if a dictionary key indicates sensitive data."""
     normalized = key.lower().replace("-", "_").strip()
+    if normalized in NON_SENSITIVE_KEYS:
+        return False
     if normalized in SENSITIVE_KEY_PATTERNS:
         return True
     return any(pattern in normalized for pattern in SENSITIVE_KEY_PATTERNS)
@@ -60,6 +74,8 @@ def _sanitize_string(val: str) -> str:
     sanitized = re.sub(r"sk-[a-zA-Z0-9_\-]{20,}", REDACTED_VALUE, sanitized, flags=re.IGNORECASE)
     # Anthropic key regex
     sanitized = re.sub(r"sk-ant-[a-zA-Z0-9_\-]{20,}", REDACTED_VALUE, sanitized, flags=re.IGNORECASE)
+    # NVIDIA API key regex
+    sanitized = re.sub(r"nvapi-[a-zA-Z0-9_\-]{20,}", REDACTED_VALUE, sanitized, flags=re.IGNORECASE)
     # GitHub personal token regex
     sanitized = re.sub(r"ghp_[a-zA-Z0-9]{30,}", REDACTED_VALUE, sanitized, flags=re.IGNORECASE)
     return sanitized

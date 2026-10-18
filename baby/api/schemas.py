@@ -12,7 +12,7 @@ a breaking change and would require ``/api/v2``.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -55,7 +55,7 @@ class AgentResultView(BaseModel):
     output: Any = None
     error: Optional[str] = None
     execution_time_ms: int = 0
-    tokens_used: Optional[Union[int, str]] = None
+    tokens_used: Optional[int] = None
     timestamp: datetime
 
 

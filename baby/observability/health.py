@@ -6,7 +6,7 @@ to report genuine status: healthy, degraded, or unavailable.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,9 @@ from baby.providers import provider_registry
 from baby.tools import tool_registry
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from baby.core.contracts import WorkerInfo
 
 
 class HealthStatus(str, Enum):
@@ -44,6 +47,34 @@ class SystemHealth(BaseModel):
     timestamp: datetime = Field(default_factory=utc_now)
     version: str = "0.1.0"
     components: Dict[str, ComponentHealth] = Field(default_factory=dict)
+
+
+_LIVE_WORKER_STATUSES = {"starting", "idle", "busy", "stopping"}
+
+
+def live_durable_workers() -> "List[WorkerInfo]":
+    """Durable worker processes with a live status and a heartbeat within the stale timeout."""
+    from datetime import timedelta
+
+    from baby.configuration import settings
+    from baby.observability.tasks import task_tracker
+    from baby.persistence.sqlite_workers import SQLiteWorkerStore
+
+    store = task_tracker.store
+    if store is None:
+        return []
+    cutoff = utc_now() - timedelta(seconds=settings.worker_stale_timeout_seconds)
+    try:
+        workers = SQLiteWorkerStore(store.db).list()
+    except Exception as exc:
+        logger.warning("Could not read durable worker registry", error=str(exc))
+        return []
+    return [w for w in workers if w.status.value in _LIVE_WORKER_STATUSES and w.last_heartbeat_at >= cutoff]
+
+
+def count_live_durable_workers() -> int:
+    """Number of live durable worker processes."""
+    return len(live_durable_workers())
 
 
 class HealthChecker:
@@ -88,10 +119,19 @@ class HealthChecker:
             agents = agent_registry.list_agents()
             enabled_agents = [a for a in agents if a.spec.enabled]
             if not agents:
+                # In the split deployment the API registers no agents: they run inside the
+                # durable worker processes, so a live worker means agents are available.
+                live_workers = count_live_durable_workers()
+                if live_workers:
+                    return ComponentHealth(
+                        status=HealthStatus.HEALTHY,
+                        message=f"Agents run in {live_workers} live worker process(es)",
+                        details={"registered_count": 0, "enabled_count": 0, "live_worker_processes": live_workers},
+                    )
                 return ComponentHealth(
                     status=HealthStatus.DEGRADED,
-                    message="No agents registered",
-                    details={"registered_count": 0, "enabled_count": 0},
+                    message="No agents registered and no live worker processes",
+                    details={"registered_count": 0, "enabled_count": 0, "live_worker_processes": 0},
                 )
             if not enabled_agents:
                 return ComponentHealth(
@@ -135,7 +175,7 @@ class HealthChecker:
             if not providers:
                 return ComponentHealth(
                     status=HealthStatus.DEGRADED,
-                    message="No model providers registered",
+                    message="No model providers registered (configure an OpenAI-compatible provider in .env)",
                     details={"total_providers": 0, "available_providers": 0},
                 )
             if not available:
