@@ -174,7 +174,9 @@ class WorkerSupervisor:
                 )
                 handle.recovered = True
                 recovered.append(handle.worker_id)
-                logger.warning("Worker process exited", worker_id=handle.worker_id, exitcode=exitcode)
+                # Exiting with 0 while the supervisor is stopping is the expected, graceful path.
+                log = logger.info if self._stopping and exitcode == 0 else logger.warning
+                log("Worker process exited", worker_id=handle.worker_id, exitcode=exitcode)
                 clean_exit = exitcode == 0 and self._max_tasks is not None
                 # A worker that refused to start because of invalid configuration would fail
                 # identically on every restart; do not restart-loop it.
