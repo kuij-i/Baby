@@ -64,6 +64,12 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     # 1. Validate configuration at startup — fail fast on critical misconfigurations
     _validate_startup_configuration(settings)
 
+    # Providers are registered only to report their availability on /health; the API never
+    # calls a model (workers register their own). Without credentials nothing is registered.
+    from baby.providers.registry import register_configured_providers
+
+    register_configured_providers()
+
     # 2. Initialize database schema if SQLite persistence is enabled
     if getattr(settings, "persistence_backend", "sqlite") == "sqlite":
         try:

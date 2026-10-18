@@ -276,3 +276,23 @@ class TestFirstRunEndpoints:
     def test_submission_without_title_is_rejected(self, durable_db, no_auth_client):
         response = no_auth_client.post("/api/v1/tasks/submit", json={"description": "list files", "priority": 5})
         assert response.status_code == 422
+
+
+class TestProviderVisibility:
+    def test_api_startup_registers_configured_provider_for_health(self, durable_db, no_auth_client):
+        from baby.providers import provider_registry
+
+        with patch.object(settings, "openai_api_key", "sk-test-" + "x" * 32):
+            try:
+                with no_auth_client as client:
+                    providers = client.get("/api/v1/health").json()["components"]["providers"]
+                assert providers["status"] == "healthy"
+            finally:
+                provider_registry.clear()
+
+    def test_without_key_health_explains_how_to_enable(self, durable_db, no_auth_client):
+        with patch.object(settings, "openai_api_key", None), no_auth_client as client:
+            providers = client.get("/api/v1/health").json()["components"]["providers"]
+        assert providers["status"] == "degraded"
+        assert ".env" in providers["message"]
+        assert "api_key" not in providers["message"].lower()

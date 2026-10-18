@@ -167,7 +167,7 @@ class HealthChecker:
             if not providers:
                 return ComponentHealth(
                     status=HealthStatus.DEGRADED,
-                    message="No model providers registered",
+                    message="No model providers registered (configure an OpenAI-compatible provider in .env)",
                     details={"total_providers": 0, "available_providers": 0},
                 )
             if not available:
