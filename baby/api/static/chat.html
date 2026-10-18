@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Baby Chat</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%235b5bd6'/%3E%3Ctext x='16' y='22' font-size='17' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'%3EB%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f6f6f9; --panel: #ffffff; --text: #1d1d27; --muted: #6b6b7b; --border: #e2e2ea;
+    --accent: #5b5bd6; --accent-text: #ffffff; --user: #5b5bd6; --user-text: #ffffff;
+    --bot: #ffffff; --code-bg: #f0f0f5; --ok: #1f8a4c; --warn: #b26a00; --err: #c62f3a;
+    --warn-bg: #fff6e5; --err-bg: #fdecee; --chip: #eeeef8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121218; --panel: #1b1b24; --text: #ececf3; --muted: #9a9aab; --border: #2c2c3a;
+      --accent: #7c7cf0; --accent-text: #0f0f17; --user: #4b4bc4; --user-text: #ffffff;
+      --bot: #1f1f2b; --code-bg: #262634; --ok: #4cc584; --warn: #f0b04a; --err: #ff6b77;
+      --warn-bg: #2d2617; --err-bg: #2f1a1d; --chip: #272738;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .logo { flex: none; width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--accent-text);
+    display: grid; place-items: center; font-weight: 700; }
+  header h1 { font-size: 17px; margin: 0; }
+  header .sub { font-size: 12px; color: var(--muted); }
+  .spacer { flex: 1; }
+  .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: var(--chip); color: var(--muted);
+    white-space: nowrap; }
+  .pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.err { color: var(--err); }
+  button { white-space: nowrap; font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); padding: 6px 12px; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.danger { color: var(--err); }
+  button:disabled { opacity: .5; cursor: default; }
+  main { flex: 1; overflow-y: auto; padding: 20px 16px; }
+  .thread { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+  .msg { display: flex; }
+  .msg.user { justify-content: flex-end; }
+  .bubble { max-width: 85%; padding: 10px 14px; border-radius: 14px; overflow-wrap: anywhere; }
+  .user .bubble { background: var(--user); color: var(--user-text); border-bottom-right-radius: 4px;
+    white-space: pre-wrap; }
+  .bot .bubble { background: var(--bot); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .bot .bubble.error { background: var(--err-bg); border-color: var(--err); }
+  .bot .bubble.approval { background: var(--warn-bg); border-color: var(--warn); }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px;
+    align-items: center; }
+  .chip { background: var(--chip); border-radius: 6px; padding: 1px 8px; font-size: 12px; color: var(--muted); }
+  .bubble p { margin: 0 0 8px; } .bubble p:last-child { margin-bottom: 0; }
+  .bubble pre { background: var(--code-bg); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 8px 0;
+    font-size: 13px; }
+  .bubble code { font-family: ui-monospace, Consolas, "Cascadia Mono", monospace; font-size: 13px; }
+  .bubble :not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  .bubble ul { margin: 4px 0 8px; padding-left: 20px; }
+  .dots span { display: inline-block; width: 7px; height: 7px; margin-right: 3px; border-radius: 50%;
+    background: var(--muted); animation: blink 1.2s infinite both; }
+  .dots span:nth-child(2) { animation-delay: .2s; } .dots span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+  .actions { display: flex; gap: 8px; margin-top: 10px; }
+  .kv { font-size: 13px; margin: 6px 0 0; } .kv div { margin: 2px 0; } .kv b { font-weight: 600; }
+  .empty { text-align: center; color: var(--muted); margin-top: 12vh; }
+  .empty h2 { color: var(--text); margin-bottom: 6px; }
+  .suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
+  footer { background: var(--panel); border-top: 1px solid var(--border); padding: 12px 16px; }
+  .composer { max-width: 820px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  textarea { flex: 1; resize: none; font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; max-height: 180px; }
+  textarea:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .options { max-width: 820px; margin: 6px auto 0; font-size: 12px; color: var(--muted); display: flex;
+    gap: 14px; align-items: center; flex-wrap: wrap; }
+  .overlay { position: fixed; inset: 0; background: rgba(10, 10, 20, .55); display: grid; place-items: center;
+    padding: 16px; z-index: 10; }
+  .overlay[hidden] { display: none; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px;
+    width: 100%; max-width: 440px; }
+  .card h2 { margin: 0 0 6px; font-size: 18px; }
+  .card p { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .card input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 10px; margin-bottom: 10px; }
+  .card .err { color: var(--err); font-size: 13px; min-height: 18px; margin-bottom: 8px; }
+  @media (max-width: 600px) {
+    .bubble { max-width: 95%; }
+    header { gap: 8px; padding: 10px 12px; }
+    header .sub { display: none; }
+    .pill { padding: 3px 8px; font-size: 11px; }
+    .options span { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">B</div>
+  <div>
+    <h1>Baby</h1>
+    <div class="sub">Personal AI operating system &middot; governed coding agent</div>
+  </div>
+  <div class="spacer"></div>
+  <span id="aiStatus" class="pill">AI: checking&hellip;</span>
+  <span id="workerStatus" class="pill">Workers: checking&hellip;</span>
+  <button id="logoutBtn" type="button" title="Change token">Log out</button>
+</header>
+
+<main id="scroll">
+  <div class="thread" id="thread"></div>
+</main>
+
+<footer>
+  <form class="composer" id="composer">
+    <textarea id="input" rows="1" placeholder="Ask Baby anything about your project&hellip;" aria-label="Message"></textarea>
+    <button class="primary" id="sendBtn" type="submit">Send</button>
+  </form>
+  <div class="options">
+    <label><input type="checkbox" id="needApproval"> Ask for admin approval before running</label>
+    <span>Enter to send &middot; Shift+Enter for a new line</span>
+  </div>
+</footer>
+
+<div class="overlay" id="login" hidden>
+  <form class="card" id="loginForm">
+    <h2>Sign in to Baby</h2>
+    <p>Paste your <b>API_AUTH_TOKEN</b> (operator) from <code>.env</code>. Use <b>API_ADMIN_TOKEN</b> instead
+      if you want to approve or deny actions. The token stays in this browser tab only.</p>
+    <input id="tokenInput" type="password" autocomplete="off" placeholder="Bearer token" aria-label="Token">
+    <div class="err" id="loginErr"></div>
+    <button class="primary" type="submit">Sign in</button>
+  </form>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const API = "/api/v1";
+  const ACTIVE = new Set(["pending", "in_progress"]);
+  const thread = document.getElementById("thread");
+  const scroller = document.getElementById("scroll");
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("sendBtn");
+  const needApproval = document.getElementById("needApproval");
+  const login = document.getElementById("login");
+  const tokenInput = document.getElementById("tokenInput");
+  const loginErr = document.getElementById("loginErr");
+  const polls = new Map();
+  let token = "";
+  try { token = sessionStorage.getItem("baby_token") || ""; } catch (e) { token = ""; }
+
+  // ---------- API ----------
+  class ApiError extends Error {
+    constructor(status, detail) { super(typeof detail === "string" ? detail : "Request failed"); this.status = status; this.detail = detail; }
+  }
+  async function api(path, options = {}) {
+    const headers = Object.assign({ "Authorization": "Bearer " + token }, options.body ? { "Content-Type": "application/json" } : {});
+    let res;
+    try {
+      res = await fetch(API + path, { method: options.method || "GET", headers, body: options.body ? JSON.stringify(options.body) : undefined });
+    } catch (e) {
+      throw new ApiError(0, "Cannot reach the Baby server. Is uvicorn still running?");
+    }
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (!res.ok) {
+      if (res.status === 401) showLogin("Your token was rejected. Paste a valid token from .env.");
+      throw new ApiError(res.status, data && data.detail !== undefined ? data.detail : res.statusText);
+    }
+    return data;
+  }
+  function detailText(err) {
+    if (!err) return "Unknown error";
+    if (typeof err.detail === "string") return err.detail;
+    if (Array.isArray(err.detail)) return err.detail.map(d => (d.loc || []).slice(1).join(".") + ": " + d.msg).join("; ");
+    return err.message || "Request failed";
+  }
+
+  // ---------- Safe rendering (model output is untrusted: escape first, then format) ----------
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function inline(s) {
+    return s
+      .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  }
+  function renderMarkdown(text) {
+    const parts = String(text || "").split(/```/);
+    let html = "";
+    parts.forEach((part, i) => {
+      if (i % 2 === 1) {
+        const body = part.replace(/^[^\n]*\n/, "");
+        html += "<pre><code>" + esc(body.replace(/\n$/, "")) + "</code></pre>";
+        return;
+      }
+      const lines = esc(part).split("\n");
+      let para = [], list = [];
+      const flushPara = () => { if (para.length) { html += "<p>" + inline(para.join("<br>")) + "</p>"; para = []; } };
+      const flushList = () => { if (list.length) { html += "<ul>" + list.map(l => "<li>" + inline(l) + "</li>").join("") + "</ul>"; list = []; } };
+      for (const line of lines) {
+        const bullet = line.match(/^\s*(?:[-*]|\d+\.)\s+(.*)$/);
+        const heading = line.match(/^\s*#{1,6}\s+(.*)$/);
+        if (bullet) { flushPara(); list.push(bullet[1]); }
+        else if (heading) { flushPara(); flushList(); html += "<p><strong>" + inline(heading[1]) + "</strong></p>"; }
+        else if (line.trim() === "") { flushPara(); flushList(); }
+        else { flushList(); para.push(line); }
+      }
+      flushPara(); flushList();
+    });
+    return html || "<p></p>";
+  }
+
+  // ---------- Thread ----------
+  function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
+  function nearBottom() { return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120; }
+  function scrollDown(force) { if (force || nearBottom()) scroller.scrollTop = scroller.scrollHeight; }
+  function clearEmpty() { const e = document.getElementById("empty"); if (e) e.remove(); }
+
+  function showEmpty() {
+    if (thread.children.length) return;
+    const box = el("div", "empty");
+    box.id = "empty";
+    box.innerHTML = "<h2>What can I help with?</h2><div>Baby reads the files in your project folder through permission-checked tools. Writing files always needs an admin's approval.</div>";
+    const sug = el("div", "suggestions");
+    ["What files are in this project?", "What does hello.py do?", "Explain what this project is for", "Suggest improvements to hello.py"].forEach(s => {
+      const b = el("button"); b.type = "button"; b.textContent = s;
+      b.onclick = () => { input.value = s; input.focus(); autosize(); };
+      sug.appendChild(b);
+    });
+    box.appendChild(sug);
+    thread.appendChild(box);
+  }
+
+  function addUser(text) {
+    clearEmpty();
+    const row = el("div", "msg user");
+    const b = el("div", "bubble"); b.textContent = text;
+    row.appendChild(b); thread.appendChild(row);
+    return row;
+  }
+  function addBot(taskId) {
+    clearEmpty();
+    const row = el("div", "msg bot");
+    row.dataset.task = taskId;
+    row.appendChild(el("div", "bubble", '<span class="dots"><span></span><span></span><span></span></span>'));
+    thread.appendChild(row);
+    return row;
+  }
+
+  function toolChips(output) {
+    const results = output && Array.isArray(output.tool_results) ? output.tool_results : [];
+    return results.map(r => {
+      const res = r && r.result && typeof r.result === "object" ? r.result : {};
+      const target = res.path ? " " + res.path : "";
+      return '<span class="chip">' + esc((r.tool || "tool") + target) + "</span>";
+    }).join("");
+  }
+  function describeOutput(output) {
+    if (output && typeof output.response === "string" && output.response.trim()) return renderMarkdown(output.response);
+    if (output && Array.isArray(output.entries)) {
+      if (!output.entries.length) return "<p>The project folder is empty.</p>";
+      return "<p>Files in <code>" + esc(output.path || ".") + "</code>:</p><ul>" +
+        output.entries.map(e => "<li><code>" + esc(e.path) + "</code>" + (e.type === "dir" || e.type === "directory" ? " (folder)" : "") + "</li>").join("") + "</ul>";
+    }
+    if (output && typeof output.content === "string") return "<pre><code>" + esc(output.content) + "</code></pre>";
+    return "<pre><code>" + esc(JSON.stringify(output, null, 2)) + "</code></pre>";
+  }
+  function seconds(task) {
+    if (!task.completed_at || !task.created_at) return "";
+    const s = (new Date(task.completed_at + "Z") - new Date(task.created_at + "Z")) / 1000;
+    return isFinite(s) && s >= 0 ? s.toFixed(1) + "s" : "";
+  }
+
+  function renderTask(row, task) {
+    const id = task.task_id && task.task_id.id ? task.task_id.id : row.dataset.task;
+    const status = task.status;
+    row.innerHTML = "";
+    const bubble = el("div", "bubble");
+    const meta = el("div", "meta");
+    const result = task.result || {};
+
+    if (ACTIVE.has(status)) {
+      bubble.innerHTML = '<span class="dots"><span></span><span></span><span></span></span>';
+      meta.innerHTML = '<span>' + (status === "pending" ? "Waiting for a worker&hellip;" : "Thinking&hellip;") + "</span>";
+      const stop = el("button", "danger"); stop.type = "button"; stop.textContent = "Stop";
+      stop.onclick = async () => { stop.disabled = true; try { await api("/tasks/" + id + "/cancel", { method: "POST" }); poll(id, row, true); } catch (e) { stop.disabled = false; alert(detailText(e)); } };
+      meta.appendChild(stop);
+    } else if (status === "completed") {
+      bubble.innerHTML = describeOutput(result.output || {});
+      meta.innerHTML = toolChips(result.output) + (seconds(task) ? "<span>" + esc(seconds(task)) + "</span>" : "") +
+        (result.tokens_used ? "<span>" + esc(result.tokens_used) + " tokens</span>" : "");
+    } else if (status === "awaiting_approval") {
+      bubble.classList.add("approval");
+      const pending = (task.approvals || []).filter(a => a.approved === null || a.approved === undefined);
+      let html = "<p><strong>Approval needed.</strong> Baby paused before doing something that needs an admin's OK.</p>";
+      pending.forEach(a => {
+        html += '<div class="kv"><div><b>Action:</b> ' + esc(a.action_type) + "</div><div><b>Why:</b> " + esc(a.reason) + "</div>";
+        Object.entries(a.operation_summary || {}).forEach(([k, v]) => { html += "<div><b>" + esc(k) + ":</b> " + esc(v) + "</div>"; });
+        html += "</div>";
+      });
+      bubble.innerHTML = html;
+      pending.forEach(a => {
+        const actions = el("div", "actions");
+        const yes = el("button", "primary"); yes.type = "button"; yes.textContent = "Approve";
+        const no = el("button", "danger"); no.type = "button"; no.textContent = "Deny";
+        const decide = async (approved) => {
+          yes.disabled = no.disabled = true;
+          try {
+            await api("/tasks/" + id + "/approvals/" + a.request_id, { method: "POST", body: { approved, reason: approved ? "Approved in chat" : "Denied in chat" } });
+            poll(id, row, true);
+          } catch (e) {
+            yes.disabled = no.disabled = false;
+            alert(e.status === 403 ? "Only the admin token can approve or deny. Log out and sign in with API_ADMIN_TOKEN." : detailText(e));
+          }
+        };
+        yes.onclick = () => decide(true); no.onclick = () => decide(false);
+        actions.append(yes, no);
+        bubble.appendChild(actions);
+      });
+      meta.innerHTML = "<span>Waiting for approval</span>";
+    } else if (status === "cancelled") {
+      bubble.innerHTML = "<p>Stopped.</p>";
+    } else {
+      bubble.classList.add("error");
+      const msg = task.error || result.error || "The task failed.";
+      let hint = "";
+      if (/No model provider is configured/i.test(msg)) hint = "<p>Set <code>NVIDIA_API_KEY</code> in <code>.env</code> and restart Baby.</p>";
+      else if (/provider call failed: (Connection error|Request timed out)/i.test(msg)) hint = "<p>Baby couldn't reach the AI service. Check your internet connection and <code>NVIDIA_BASE_URL</code>.</p>";
+      else if (/provider call failed/i.test(msg)) hint ="<p>The AI service rejected the request. Check <code>NVIDIA_API_KEY</code> / <code>NVIDIA_MODEL</code> in <code>.env</code>.</p>";
+      bubble.innerHTML = "<p><strong>Couldn't complete that.</strong></p><p>" + esc(msg) + "</p>" + hint;
+      if (result.output) meta.innerHTML = toolChips(result.output);
+    }
+    row.appendChild(bubble);
+    if (meta.innerHTML) bubble.appendChild(meta);
+    scrollDown(false);
+  }
+
+  function poll(id, row, immediate) {
+    if (polls.has(id)) clearTimeout(polls.get(id));
+    const started = Date.now();
+    const tick = async () => {
+      try {
+        const task = await api("/tasks/" + id);
+        renderTask(row, task);
+        if (ACTIVE.has(task.status) || task.status === "awaiting_approval") {
+          const waited = (Date.now() - started) / 1000;
+          const delay = task.status === "awaiting_approval" ? 5000 : waited < 30 ? 1500 : 4000;
+          polls.set(id, setTimeout(tick, delay));
+        } else {
+          polls.delete(id);
+        }
+      } catch (e) {
+        if (e.status === 401) return;
+        polls.set(id, setTimeout(tick, 5000));
+      }
+    };
+    polls.set(id, setTimeout(tick, immediate ? 0 : 1200));
+  }
+
+  async function submit(text) {
+    const body = { title: text.replace(/\s+/g, " ").trim().slice(0, 80) || "Chat message", description: text, priority: needApproval.checked ? 9 : 5 };
+    try {
+      return await api("/tasks/submit", { method: "POST", body });
+    } catch (e) {
+      // Admin and development-mode callers may act on any engagement, so they must name one.
+      if (e.status === 422 && typeof e.detail === "string" && /engagement/i.test(e.detail)) {
+        return await api("/tasks/submit", { method: "POST", body: Object.assign({ engagement_id: "default" }, body) });
+      }
+      throw e;
+    }
+  }
+
+  async function send(text) {
+    addUser(text);
+    const row = addBot("");
+    scrollDown(true);
+    sendBtn.disabled = true;
+    try {
+      const res = await submit(text);
+      row.dataset.task = res.task_id;
+      poll(res.task_id, row, false);
+    } catch (e) {
+      renderTask(row, { status: "failed", error: detailText(e) });
+    } finally {
+      sendBtn.disabled = false;
+    }
+  }
+
+  async function loadHistory() {
+    thread.innerHTML = "";
+    polls.forEach(t => clearTimeout(t)); polls.clear();
+    let tasks = [];
+    try { tasks = await api("/tasks?limit=30"); } catch (e) { if (e.status !== 401) showEmpty(); return; }
+    if (!Array.isArray(tasks) || !tasks.length) { showEmpty(); return; }
+    tasks.slice().reverse().forEach(task => {
+      addUser(task.description || task.title);
+      const id = task.task_id.id;
+      const row = addBot(id);
+      renderTask(row, task);
+      if (ACTIVE.has(task.status) || task.status === "awaiting_approval") poll(id, row, false);
+    });
+    scrollDown(true);
+  }
+
+  // ---------- Status ----------
+  async function refreshStatus() {
+    const ai = document.getElementById("aiStatus"), wk = document.getElementById("workerStatus");
+    try {
+      const res = await fetch(API + "/health");
+      const health = await res.json();
+      const p = health.components && health.components.providers, a = health.components && health.components.agents;
+      ai.className = "pill " + (p && p.status === "healthy" ? "ok" : "warn");
+      ai.textContent = p && p.status === "healthy" ? "AI: connected" : "AI: no model key";
+      const live = a && a.details ? a.details.live_worker_processes : undefined;
+      wk.className = "pill " + (a && a.status === "healthy" ? "ok" : "err");
+      wk.textContent = a && a.status === "healthy" ? "Workers: " + (live !== undefined ? live : "ready") : "Workers: none running";
+    } catch (e) {
+      ai.className = wk.className = "pill err";
+      ai.textContent = "Server offline"; wk.textContent = "Workers: ?";
+    }
+  }
+
+  // ---------- Login ----------
+  function showLogin(message) {
+    loginErr.textContent = message || "";
+    login.hidden = false;
+    setTimeout(() => tokenInput.focus(), 0);
+  }
+  document.getElementById("loginForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const candidate = tokenInput.value.trim();
+    if (!candidate) { loginErr.textContent = "Paste a token first."; return; }
+    token = candidate;
+    try {
+      await api("/tasks?limit=1");
+      try { sessionStorage.setItem("baby_token", token); } catch (e) { /* storage unavailable: keep in memory */ }
+      login.hidden = true; tokenInput.value = ""; loginErr.textContent = "";
+      await loadHistory();
+      input.focus();
+    } catch (e) {
+      loginErr.textContent = e.status === 401 ? "That token was rejected. Copy it again from .env." : detailText(e);
+    }
+  });
+  document.getElementById("logoutBtn").addEventListener("click", () => {
+    token = "";
+    try { sessionStorage.removeItem("baby_token"); } catch (e) { /* ignore */ }
+    polls.forEach(t => clearTimeout(t)); polls.clear();
+    thread.innerHTML = "";
+    showLogin("");
+  });
+
+  // ---------- Composer ----------
+  function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 180) + "px"; }
+  input.addEventListener("input", autosize);
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); document.getElementById("composer").requestSubmit(); }
+  });
+  document.getElementById("composer").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const text = input.value.trim();
+    if (!text || sendBtn.disabled) return;
+    if (!token) { showLogin(""); return; }
+    input.value = ""; autosize();
+    send(text);
+  });
+
+  refreshStatus();
+  setInterval(refreshStatus, 15000);
+  if (token) {
+    api("/tasks?limit=1").then(loadHistory).catch(e => { if (e.status !== 401) showLogin(detailText(e)); });
+  } else {
+    showLogin("");
+  }
+})();
+</script>
+</body>
+</html>

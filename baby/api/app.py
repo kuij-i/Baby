@@ -21,9 +21,12 @@ Phase 12 additions:
 """
 
 from contextlib import asynccontextmanager
+from functools import lru_cache
+from importlib import resources
 from typing import AsyncIterator
 
 from fastapi import APIRouter, FastAPI
+from fastapi.responses import HTMLResponse
 
 from baby.api.middleware import ReadOnlyMiddleware
 from baby.api.routes import agents, audit, health, metrics, readiness, tasks, workers
@@ -225,4 +228,29 @@ def root() -> dict:
         "api": "/api/v1",
         "health": "/api/v1/health",
         "docs": "/docs",
+        "chat": "/chat",
     }
+
+
+# The chat page is static: it holds no data and calls the authenticated API from the browser
+# with the token the user pastes in. Model output is escaped client-side before rendering.
+CHAT_PAGE_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; "
+        "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+}
+
+
+@lru_cache(maxsize=1)
+def _chat_page_html() -> str:
+    return resources.files("baby.api").joinpath("static/chat.html").read_text(encoding="utf-8")
+
+
+@app.get("/chat", include_in_schema=False, response_class=HTMLResponse)
+def chat_page() -> HTMLResponse:
+    """Browser chat UI: submit a message as a task, watch the worker's answer, decide approvals."""
+    return HTMLResponse(_chat_page_html(), headers=CHAT_PAGE_HEADERS)

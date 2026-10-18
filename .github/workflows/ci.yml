@@ -101,6 +101,7 @@ jobs:
           /tmp/wheel-env/bin/python -m pip install dist/*.whl
           cd /tmp
           /tmp/wheel-env/bin/python -c "import baby, baby.api.app, baby.workers; print('baby', baby.__version__)"
+          /tmp/wheel-env/bin/python -c "from baby.api.app import _chat_page_html; assert '<title>Baby Chat</title>' in _chat_page_html(); print('chat page packaged')"
           /tmp/wheel-env/bin/python -m baby.workers --help
 
   audit:

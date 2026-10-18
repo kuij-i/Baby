@@ -231,6 +231,25 @@ WORKER_ENABLED=true uvicorn baby.api.app:app --host 127.0.0.1 --port 8000
 
 ---
 
+### Chat Page
+
+Open **http://127.0.0.1:8000/chat** in a browser once the API and a worker are running
+(`WORKER_ENABLED=true` starts both with one command).
+
+1. Sign in with `API_AUTH_TOKEN` from `.env`. Use `API_ADMIN_TOKEN` instead if you also want to approve or
+   deny actions. The token is kept only in that browser tab.
+2. Type a message, e.g. *"What does hello.py do?"*, and press Enter. Each message becomes a task: a worker
+   process runs the CodingAgent, which may read files in `CODING_REPO_ROOT` through the permission-checked
+   tools; the answer appears with the tools it used (e.g. `read_file hello.py`), the time taken and tokens.
+3. Tick **Ask for admin approval before running** to see governance in action: the message pauses with
+   **Approve** / **Deny** buttons. Only the admin token can decide; an operator gets a clear message instead.
+4. The header shows whether the AI provider is configured and how many workers are live. Earlier messages are
+   reloaded from the database, so the conversation survives a page refresh or server restart.
+
+Each message is answered on its own: the AI does not see earlier messages in the conversation. The page is
+static and uses only the public API, so everything it does is subject to the same authentication,
+engagement scoping, approvals and audit log as any other client.
+
 ### First-Run Verification Walkthrough
 
 Once running, verify your installation using `curl`. Authenticated endpoints need the operator token from
@@ -240,7 +259,7 @@ Once running, verify your installation using `curl`. Authenticated endpoints nee
 TOKEN=<API_AUTH_TOKEN from .env>
 ```
 
-1. **Open the server root** (no auth; static links to the API and the interactive docs at `/docs`):
+1. **Open the server root** (no auth; static links to the API, the chat page at `/chat` and the interactive docs at `/docs`):
    ```bash
    curl -s http://127.0.0.1:8000/
    # Response: {"name":"BABY Observability API","version":"0.1.0","api":"/api/v1",...}

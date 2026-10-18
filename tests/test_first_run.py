@@ -242,6 +242,7 @@ class TestFirstRunEndpoints:
             "api": "/api/v1",
             "health": "/api/v1/health",
             "docs": "/docs",
+            "chat": "/chat",
         }
 
     def test_root_not_in_openapi_contract(self, no_auth_client):
