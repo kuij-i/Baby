@@ -296,3 +296,96 @@ class TestProviderVisibility:
         assert providers["status"] == "degraded"
         assert ".env" in providers["message"]
         assert "api_key" not in providers["message"].lower()
+
+
+def _register_worker_hosting(agents: str, status: str = "idle", heartbeat_age_seconds: float = 0.0) -> str:
+    store = task_tracker.store
+    assert store is not None
+    worker_id = f"worker-{uuid4().hex}"
+    SQLiteWorkerStore(store.db).register(
+        worker_id, "host", 1, utc_now() - timedelta(seconds=heartbeat_age_seconds), metadata={"agents": agents}
+    )
+    with store.db.transaction() as conn:
+        conn.execute("UPDATE workers SET status = ? WHERE worker_id = ?", (status, worker_id))
+    return worker_id
+
+
+class TestAgentsHostedByWorkers:
+    def test_no_workers_no_agents(self, durable_db, no_auth_client):
+        assert no_auth_client.get("/api/v1/agents").json() == []
+        assert no_auth_client.get("/api/v1/agents/coding-agent").status_code == 404
+
+    def test_live_worker_agents_are_listed(self, durable_db, no_auth_client):
+        _register_worker_hosting("coding-agent")
+        _register_worker_hosting("coding-agent")  # listed once
+        agents = no_auth_client.get("/api/v1/agents").json()
+        assert [a["id"] for a in agents] == ["coding-agent"]
+        assert agents[0]["name"] == "CodingAgent"
+        assert {p["category"] for p in agents[0]["permissions"]} == {"local_read", "local_write"}
+        assert no_auth_client.get("/api/v1/agents/coding-agent").json()["id"] == "coding-agent"
+
+    def test_stopped_or_stale_workers_and_unknown_ids_are_not_listed(self, durable_db, no_auth_client):
+        _register_worker_hosting("coding-agent", status="stopped")
+        _register_worker_hosting("coding-agent", heartbeat_age_seconds=settings.worker_stale_timeout_seconds + 60)
+        _register_worker_hosting("custom-agent")
+        assert no_auth_client.get("/api/v1/agents").json() == []
+        assert no_auth_client.get("/api/v1/agents/custom-agent").status_code == 404
+
+    def test_worker_records_hosted_agents_at_startup(self, durable_db):
+        from baby.agents.coding import CodingAgent
+        from baby.workers.runtime import WorkerRuntime, WorkerRuntimeConfig
+
+        agent_registry.register(CodingAgent(repo_root="."))
+        runtime = WorkerRuntime(WorkerRuntimeConfig.from_settings(worker_id=f"worker-{uuid4().hex}"))
+        runtime.startup()
+        try:
+            store = task_tracker.store
+            assert store is not None
+            worker = SQLiteWorkerStore(store.db).get(runtime.worker_id)
+            assert worker is not None and worker.metadata["agents"] == "coding-agent"
+        finally:
+            runtime.shutdown()
+
+
+class TestMetricsTaskCounts:
+    def _seed(self) -> None:
+        from baby.core import Task, TaskStatus
+
+        done = Task(title="a", description="d", user_id="default")
+        task_tracker.register_task(done)
+        task_tracker.update_status(done.id, TaskStatus.IN_PROGRESS)
+        task_tracker.update_status(done.id, TaskStatus.COMPLETED)
+        task_tracker.register_task(Task(title="b", description="d", user_id="default"))
+        task_tracker.register_task(Task(title="c", description="d", user_id="other"))
+
+    def test_admin_sees_current_counts_from_store(self, durable_db, no_auth_client):
+        self._seed()
+        body = no_auth_client.get("/api/v1/metrics").json()
+        counts = body["gauges"]["tasks_by_status"]
+        assert counts["status=completed"] == 1
+        assert counts["status=pending"] == 2
+        assert counts["status=failed"] == 0
+        assert "tasks_by_status" not in body["counters"]
+
+    def test_operator_counts_are_engagement_scoped(self, durable_db):
+        from baby.api.app import app
+
+        self._seed()
+        with patch.multiple(
+            settings,
+            api_require_auth=True,
+            development_mode=False,
+            api_admin_token=ADMIN_SECRET,
+            api_auth_token=OP_SECRET,
+            operator_engagements="default",
+        ):
+            body = TestClient(app).get("/api/v1/metrics", headers={"Authorization": f"Bearer {OP_SECRET}"}).json()
+        counts = body["gauges"]["tasks_by_status"]
+        assert counts["status=pending"] == 1  # the "other" engagement's task is not counted
+        assert counts["status=completed"] == 1
+
+    def test_store_failure_keeps_snapshot(self, durable_db, no_auth_client):
+        with patch.object(task_tracker, "count_tasks", side_effect=RuntimeError("db gone")):
+            response = no_auth_client.get("/api/v1/metrics")
+        assert response.status_code == 200
+        assert "tasks_by_status" not in response.json()["gauges"]

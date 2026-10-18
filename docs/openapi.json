@@ -78,7 +78,7 @@
           "Metrics"
         ],
         "summary": "Get Metrics",
-        "description": "Expose snapshot of bounded operational metrics.",
+        "description": "Expose snapshot of bounded operational metrics.\n\nCounters and latencies describe events seen by this API process. Tasks run in worker\nprocesses, so ``gauges.tasks_by_status`` is read from the durable store instead of\nin-process counters (which would show every task as still pending).",
         "operationId": "get_metrics_metrics_get",
         "security": [
           {
@@ -713,7 +713,7 @@
           "Agents"
         ],
         "summary": "List Agents",
-        "description": "Expose safe read-only visibility into registered agents.",
+        "description": "Expose safe read-only visibility into registered agents.\n\nIncludes agents registered in this process and, because tasks run in worker processes,\nthe agents hosted by live durable workers.",
         "operationId": "list_agents_agents_get",
         "security": [
           {
@@ -1108,7 +1108,7 @@
           "Metrics"
         ],
         "summary": "Get Metrics",
-        "description": "Expose snapshot of bounded operational metrics.",
+        "description": "Expose snapshot of bounded operational metrics.\n\nCounters and latencies describe events seen by this API process. Tasks run in worker\nprocesses, so ``gauges.tasks_by_status`` is read from the durable store instead of\nin-process counters (which would show every task as still pending).",
         "operationId": "get_metrics_api_v1_metrics_get",
         "security": [
           {
@@ -1743,7 +1743,7 @@
           "Agents"
         ],
         "summary": "List Agents",
-        "description": "Expose safe read-only visibility into registered agents.",
+        "description": "Expose safe read-only visibility into registered agents.\n\nIncludes agents registered in this process and, because tasks run in worker processes,\nthe agents hosted by live durable workers.",
         "operationId": "list_agents_api_v1_agents_get",
         "security": [
           {

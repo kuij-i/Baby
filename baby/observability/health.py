@@ -6,7 +6,7 @@ to report genuine status: healthy, degraded, or unavailable.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,9 @@ from baby.providers import provider_registry
 from baby.tools import tool_registry
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from baby.core.contracts import WorkerInfo
 
 
 class HealthStatus(str, Enum):
@@ -49,8 +52,8 @@ class SystemHealth(BaseModel):
 _LIVE_WORKER_STATUSES = {"starting", "idle", "busy", "stopping"}
 
 
-def count_live_durable_workers() -> int:
-    """Count durable worker processes with a live status and a heartbeat within the stale timeout."""
+def live_durable_workers() -> "List[WorkerInfo]":
+    """Durable worker processes with a live status and a heartbeat within the stale timeout."""
     from datetime import timedelta
 
     from baby.configuration import settings
@@ -59,14 +62,19 @@ def count_live_durable_workers() -> int:
 
     store = task_tracker.store
     if store is None:
-        return 0
+        return []
     cutoff = utc_now() - timedelta(seconds=settings.worker_stale_timeout_seconds)
     try:
         workers = SQLiteWorkerStore(store.db).list()
     except Exception as exc:
         logger.warning("Could not read durable worker registry", error=str(exc))
-        return 0
-    return sum(1 for w in workers if w.status.value in _LIVE_WORKER_STATUSES and w.last_heartbeat_at >= cutoff)
+        return []
+    return [w for w in workers if w.status.value in _LIVE_WORKER_STATUSES and w.last_heartbeat_at >= cutoff]
+
+
+def count_live_durable_workers() -> int:
+    """Number of live durable worker processes."""
+    return len(live_durable_workers())
 
 
 class HealthChecker:

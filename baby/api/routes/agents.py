@@ -1,6 +1,6 @@
 """Read-only agent visibility endpoints."""
 
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, Set, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -12,9 +12,27 @@ from baby.observability.redaction import redact_sensitive_data
 router = APIRouter(tags=["Agents"])
 
 
+def _worker_hosted_views() -> List[Dict[str, Any]]:
+    """Views of the agents that live durable worker processes report hosting.
+
+    Workers record the IDs their bootstrap registered; only agents with a spec known to the
+    default bootstrap can be described (others are omitted rather than guessed).
+    """
+    from baby.observability.health import live_durable_workers
+    from baby.workers.bootstrap import default_agent_specs
+
+    hosted: Set[str] = set()
+    for worker in live_durable_workers():
+        hosted.update(a for a in str(worker.metadata.get("agents", "")).split(",") if a)
+    return [_spec_to_view(spec) for spec in default_agent_specs() if str(spec.id) in hosted]
+
+
 def _agent_to_view(agent: Any) -> Dict[str, Any]:
     """Convert an Agent instance to a safe operational representation."""
-    spec = agent.spec
+    return _spec_to_view(agent.spec)
+
+
+def _spec_to_view(spec: Any) -> Dict[str, Any]:
     return {
         "id": str(spec.id),
         "name": spec.name,
@@ -33,9 +51,14 @@ def _agent_to_view(agent: Any) -> Dict[str, Any]:
 def list_agents(
     caller: AuthenticatedCaller = Depends(get_current_caller),
 ) -> List[Dict[str, Any]]:
-    """Expose safe read-only visibility into registered agents."""
-    agents = agent_registry.list_agents()
-    views = [_agent_to_view(a) for a in agents]
+    """Expose safe read-only visibility into registered agents.
+
+    Includes agents registered in this process and, because tasks run in worker processes,
+    the agents hosted by live durable workers.
+    """
+    views = [_agent_to_view(a) for a in agent_registry.list_agents()]
+    known = {view["id"] for view in views}
+    views.extend(view for view in _worker_hosted_views() if view["id"] not in known)
     return cast(List[Dict[str, Any]], redact_sensitive_data(views))
 
 
@@ -49,6 +72,9 @@ def get_agent(
         agent = agent_registry.get(agent_id)
         return cast(Dict[str, Any], redact_sensitive_data(_agent_to_view(agent)))
     except Exception:
+        for view in _worker_hosted_views():
+            if view["id"] == agent_id:
+                return cast(Dict[str, Any], redact_sensitive_data(view))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent '{agent_id}' not found",

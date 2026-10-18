@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Optional, Protocol
 from uuid import uuid4
 
+from baby.agents import agent_registry
 from baby.audit import audit_log
 from baby.core import AgentResult, AuditEventType, Task, TaskStatus, WorkerStatus
 from baby.errors import LeaseLostError
@@ -150,7 +151,12 @@ class WorkerRuntime:
             hostname=socket.gethostname(),
             pid=os.getpid(),
             now=now,
-            metadata={"platform": platform.system(), "python": platform.python_version(), "slot": self.config.slot},
+            metadata={
+                "platform": platform.system(),
+                "python": platform.python_version(),
+                "slot": self.config.slot,
+                "agents": ",".join(sorted(str(a.spec.id) for a in agent_registry.list_agents())),
+            },
         )
         try:
             self._recovery.recover(now)

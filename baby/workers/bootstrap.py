@@ -18,9 +18,12 @@ with broken or over-broad coding tools.
 """
 
 import importlib
-from typing import Callable
+from typing import TYPE_CHECKING, Callable, List
 
 from baby.errors import ConfigurationError
+
+if TYPE_CHECKING:
+    from baby.core import AgentSpec
 
 DEFAULT_BOOTSTRAP = "baby.workers.bootstrap:default_bootstrap"
 
@@ -42,6 +45,13 @@ def default_bootstrap() -> None:
     for permission in spec.permissions:
         permission_manager.revoke_permission(agent_id, permission.category)
         permission_manager.grant_permission(agent_id, permission)
+
+
+def default_agent_specs() -> "List[AgentSpec]":
+    """Specs of the agents ``default_bootstrap`` registers, for read-only visibility outside workers."""
+    from baby.agents.coding import create_default_coding_spec
+
+    return [create_default_coding_spec()]
 
 
 def resolve_bootstrap(path: str) -> Callable[[], None]:

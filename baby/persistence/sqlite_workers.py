@@ -16,7 +16,8 @@ from baby.core import TaskId, WorkerInfo, WorkerStatus
 from baby.persistence.database import DatabaseManager, db_manager
 
 # Only these metadata keys are persisted; anything else (e.g. environment, tokens) is dropped.
-ALLOWED_WORKER_METADATA_KEYS = frozenset({"hostname", "pid", "platform", "python", "start_method", "slot"})
+# "agents" is a comma-separated list of the agent IDs the worker's bootstrap registered.
+ALLOWED_WORKER_METADATA_KEYS = frozenset({"hostname", "pid", "platform", "python", "start_method", "slot", "agents"})
 
 # Statuses that represent a worker which is expected to be running.
 LIVE_WORKER_STATUSES = (WorkerStatus.STARTING, WorkerStatus.IDLE, WorkerStatus.BUSY, WorkerStatus.STOPPING)
