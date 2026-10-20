@@ -57,6 +57,61 @@ CODING_AGENT_PERMISSIONS = [
     ),
 ]
 
+# The only phrasings the CodingAgent runs without a model provider, matched against the WHOLE description.
+# A path is one token of path characters (no spaces, quotes or shell metacharacters) that cannot start with "-".
+_LIST_REQUEST_RE = re.compile(
+    r"(?:please )?(?:ls|list(?: the| all(?: the)?)? (?:files|directory|dir))"
+    r"(?: (?:(?:in|under|of) )?(?P<path>[A-Za-z0-9_./][A-Za-z0-9_./-]*))?",
+    re.IGNORECASE,
+)
+_LIST_PREPOSITIONS = {"in", "under", "of"}
+
+
+def _parse_list_request(description: str) -> Optional[Dict[str, Any]]:
+    """Parse an explicit file-listing request into ``list_files`` arguments.
+
+    Without a model provider this is the only free-text request the CodingAgent may run, so it accepts a small,
+    strict set of phrasings ("ls [path]", "list files [in <path>]", "list the directory", "please list files", ...)
+    matched against the whole normalised description, optionally followed by a trailing JSON object of tool
+    arguments (``list files {"path": "src"}``). Anything else, e.g. "list the bugs in auth.py", returns None.
+    The returned path is not validated here: it must still go through ``ToolExecutor`` and the path resolver.
+
+    Args:
+        description: Plan step description.
+
+    Returns:
+        Keyword arguments for ``list_files`` (empty for the repository root), or None if the description is not
+        an explicit file-listing request.
+    """
+    text = description.strip()
+    json_args: Dict[str, Any] = {}
+    if "{" in text:
+        start = text.index("{")
+        try:
+            parsed = json.loads(text[start:])
+        except ValueError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        json_args = parsed
+        text = text[:start]
+
+    prefix = " ".join(text.split())
+    match = _LIST_REQUEST_RE.fullmatch(prefix) or _LIST_REQUEST_RE.fullmatch(prefix.rstrip(".!?"))
+    if match is None:
+        return None
+
+    path = match.group("path")
+    if path is None:
+        return json_args
+    if set(path) - {".", "/"}:
+        # Trailing dots after a real path name are sentence punctuation ("list files in src.").
+        path = path.rstrip(".")
+    if path.lower() in _LIST_PREPOSITIONS or "path" in json_args:
+        # "list files in" with no path, or a path given both in text and JSON: ambiguous, fail closed.
+        return None
+    return {**json_args, "path": path}
+
 
 def create_default_coding_spec(agent_id: str = "coding-agent") -> AgentSpec:
     """Create a standard specification for the Coding Agent."""
@@ -428,16 +483,16 @@ class CodingAgent(Agent):
     async def _execute_heuristic(self, context: ExecutionContext) -> AgentResult:
         """Fallback execution when no model provider is available.
 
-        Only a request to list files (the word "list" or "ls") can be handled without a model;
-        it runs ``list_files`` through the executor. Anything else fails explicitly: the agent
-        must never report a step as completed when nothing was executed.
+        Only an explicit file-listing request (see ``_parse_list_request``) can be handled without a
+        model; it runs ``list_files`` through the executor, so path and repository boundary checks
+        still apply. Anything else fails explicitly: the agent must never report a step as completed
+        when nothing was executed.
         """
         step = context.plan_step
-        words = set(re.findall(r"[a-z]+", step.description.lower()))
+        tool_args = _parse_list_request(step.description)
 
-        if words & {"list", "ls"}:
+        if tool_args is not None:
             tool = self._tools["list_files"]
-            tool_args = self._extract_tool_args(step.description)
             res = await tool_executor.execute(
                 tool=tool,
                 agent_id=self.spec.id,
@@ -460,7 +515,7 @@ class CodingAgent(Agent):
             success=False,
             error=(
                 "No model provider is configured (set NVIDIA_API_KEY or OPENAI_API_KEY to enable the model-driven "
-                "CodingAgent). Without one only explicit tool steps and 'list files' requests can run; "
+                "CodingAgent). Without one only explicit tool steps and explicit 'list files' requests can run; "
                 "nothing was executed for this step."
             ),
         )

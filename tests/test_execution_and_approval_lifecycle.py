@@ -3,7 +3,8 @@
 Covers:
 - D1: a model provider is optional. When OPENAI_API_KEY is configured the worker bootstrap
   registers the OpenAI-compatible provider; without one the CodingAgent runs explicit tool
-  steps and "list files" requests and fails every other step instead of reporting success.
+  steps and explicit file-listing requests ("ls [path]", "list files [in <path>]") and fails every other
+  step instead of reporting success.
 - Approval expiry (approval_ttl_seconds): undecided requests and unused grants expire; an
   expired request cannot be decided, an expired grant is never claimed or consumed, and
   recovery fails such tasks closed.
@@ -22,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from baby.agents import agent_registry
 from baby.agents.coding import CODING_AGENT_PERMISSIONS, CodingAgent, create_default_coding_spec
+from baby.agents.coding.agent import _parse_list_request
 from baby.api.app import app
 from baby.audit import audit_log
 from baby.configuration import Settings, settings, validate_settings
@@ -72,6 +74,54 @@ def durable_env(tmp_path: Path):
     permission_manager.clear()
     db_manager.configure(original_url)
     db_manager.init_schema()
+
+
+# Explicit file-listing requests the CodingAgent may run without a model provider, with the list_files args.
+LIST_REQUESTS: List[Any] = [
+    ("ls", {}),
+    ("ls src", {"path": "src"}),
+    ("list files", {}),
+    ("list the files", {}),
+    ("list all files", {}),
+    ("list all the files", {}),
+    ("list files in src", {"path": "src"}),
+    ("list files under src/sub", {"path": "src/sub"}),
+    ("list directory", {}),
+    ("list the directory", {}),
+    ("list dir src", {"path": "src"}),
+    ("please list files", {}),
+    ("Please list files", {}),
+    ("  List   Files.  ", {}),
+    ("list files?", {}),
+    ("list files in src.", {"path": "src"}),
+    ("list files in .", {"path": "."}),
+    ("list files in ../..", {"path": "../.."}),
+    ("LS SRC/Sub", {"path": "SRC/Sub"}),
+    ('list files {"path": "src"}', {"path": "src"}),
+    ('list files {"path": "src", "recursive": false}', {"path": "src", "recursive": False}),
+    ('list files in src {"recursive": false}', {"path": "src", "recursive": False}),
+]
+
+# Anything else must fail with "No model provider is configured" and run nothing.
+NOT_LIST_REQUESTS: List[str] = [
+    "update the tools and details",
+    "else",
+    "falls back",
+    "realistic",
+    "List the security bugs in auth.py",
+    "list the bugs in auth.py",
+    "list todos",
+    "can you list what main.py does",
+    "don't list files, explain X",
+    "listing",
+    "playlist",
+    "ls -la; rm -rf /",
+    "ls -la",
+    "list files and explain them",
+    "list files {not json}",
+    'list files {"path": "src"} and more',
+    "List repo",
+]
 
 
 @pytest.fixture
@@ -192,14 +242,50 @@ class TestTruthfulExecution:
         assert result.success is True
         assert [e["path"] for e in result.output["entries"]] == ["hello.txt"]  # type: ignore[index]
 
-    @pytest.mark.parametrize("description", ["update the tools and details", "else", "falls back", "realistic"])
-    def test_list_heuristic_matches_whole_words_only(self, repo, description):
+    @pytest.mark.parametrize("description", NOT_LIST_REQUESTS)
+    def test_non_listing_requests_fail_without_provider(self, repo, description):
         import asyncio
 
         agent = _register_coding_agent(repo)
         result = asyncio.run(agent.execute(_context(description)))
         assert result.success is False
         assert "No model provider is configured" in (result.error or "")
+        assert AuditEventType.TOOL_INVOKED not in [e.event_type for e in audit_log.get_events()]
+
+    @pytest.mark.parametrize(("description", "expected"), LIST_REQUESTS)
+    def test_parse_list_request_accepts_explicit_listing(self, description, expected):
+        assert _parse_list_request(description) == expected
+
+    @pytest.mark.parametrize("description", NOT_LIST_REQUESTS + ['list files in a {"path": "b"}', "list files in"])
+    def test_parse_list_request_rejects_everything_else(self, description):
+        assert _parse_list_request(description) is None
+
+    async def test_plain_text_path_goes_through_the_executor(self, repo):
+        (repo / "src").mkdir()
+        (repo / "src" / "a.py").write_text("a = 1\n", encoding="utf-8")
+        agent = _register_coding_agent(repo)
+        result = await agent.execute(_context("list files in src"))
+        assert result.success is True
+        assert [e["path"] for e in result.output["entries"]] == ["src/a.py"]  # type: ignore[index]
+        invoked = [e for e in audit_log.get_events() if e.event_type == AuditEventType.TOOL_INVOKED]
+        assert [(e.details["tool"], e.details["input_keys"]) for e in invoked] == [("list_files", ["path"])]
+
+    @pytest.mark.parametrize(
+        ("description", "error_fragment"),
+        [
+            ("list files in ../../etc", "outside the configured repository root"),
+            ("ls ..", "outside the configured repository root"),
+            ("list files in .git", ".git"),
+            ("list files in missing", "missing"),
+        ],
+    )
+    async def test_listing_outside_the_repository_fails_in_the_executor(self, repo, description, error_fragment):
+        agent = _register_coding_agent(repo)
+        result = await agent.execute(_context(description))
+        assert result.success is False
+        assert error_fragment in (result.error or "").lower()
+        # The parser accepted it; the executor's boundary checks refused it.
+        assert AuditEventType.TOOL_INVOKED in [e.event_type for e in audit_log.get_events()]
 
     async def test_explicit_tool_step_runs_without_provider(self, repo):
         agent = _register_coding_agent(repo)
