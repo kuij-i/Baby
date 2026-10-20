@@ -2653,6 +2653,16 @@
           "reasoning": {
             "type": "string",
             "title": "Reasoning"
+          },
+          "approval_required": {
+            "type": "boolean",
+            "title": "Approval Required",
+            "default": false
+          },
+          "planner_mode": {
+            "type": "string",
+            "title": "Planner Mode",
+            "default": "rule"
           }
         },
         "type": "object",

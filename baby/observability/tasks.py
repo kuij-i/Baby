@@ -18,7 +18,7 @@ The in-memory dictionary is used only for ``persistence_backend='in_memory'``.
 """
 
 import threading
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from baby.configuration import settings
@@ -244,6 +244,28 @@ class TaskTracker:
             record.updated_at = utc_now()
 
         return self._mutate(task_id, _set)
+
+    def set_plan_if_absent(self, task_id: TaskId, plan: Plan) -> Tuple[Optional[Plan], bool]:
+        """Attach ``plan`` unless the task already has one, atomically; return the stored plan.
+
+        A task's plan is fixed the first time it is stored: a resumed task (or a racing worker)
+        gets the original plan back, so its steps and approval digests never change.
+
+        Returns:
+            ``(stored_plan, created)``: the plan now stored on the task (None if the task does not
+            exist) and whether ``plan`` was the one stored by this call.
+        """
+        created = False
+
+        def _set(record: TaskRecord) -> None:
+            nonlocal created
+            if record.plan is None:
+                record.plan = plan
+                record.updated_at = utc_now()
+                created = True
+
+        record = self._mutate(task_id, _set)
+        return (record.plan if record else None), created
 
     def record_approval_request(self, task_id: TaskId, approval: ApprovalRequest) -> Optional[TaskRecord]:
         """Record an approval request on a task and move it to AWAITING_APPROVAL.

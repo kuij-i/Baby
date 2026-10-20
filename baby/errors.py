@@ -104,6 +104,12 @@ class LeaseLostError(TaskClaimError):
     pass
 
 
+class PlanningError(BabyException):
+    """A task could not be planned (e.g. the model planner returned an invalid plan); the task fails closed."""
+
+    pass
+
+
 class IdempotencyConflictError(BabyException):
     """An ``Idempotency-Key`` was reused for a request that differs from the original."""
 

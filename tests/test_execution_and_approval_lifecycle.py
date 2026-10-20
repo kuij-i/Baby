@@ -433,7 +433,7 @@ class TestApprovalExpiry:
             assert runtime.queue.claim_next(runtime.worker_id, now=granted_at + timedelta(seconds=20)) is not None
         finally:
             runtime.shutdown()
-        args = ("plan_step:1", "plan_step_approval", {"description": "privileged", "priority": 9}, "r")
+        args = ("plan", "plan_approval", {"steps": ["privileged"], "priority": 9}, "r")
         late = granted_at + timedelta(minutes=2)
         orchestrator = AgentId(id="orchestrator")
         assert not approval_service.authorize_or_request(record.task_id, orchestrator, ENG, *args, now=late)
@@ -469,7 +469,7 @@ class TestCompletedAfterApproval:
         try:
             assert await _execute_next(runtime) == TaskStatus.AWAITING_APPROVAL
             parked = task_tracker.get_task(record.task_id)
-            assert parked.error == "Approval required for plan step 1"  # type: ignore[union-attr]
+            assert parked.error == "Approval required for plan (1 step(s))"  # type: ignore[union-attr]
             approval_service.decide(record.task_id, parked.approvals[0].request_id, True, "admin-user")  # type: ignore
             assert await _execute_next(runtime) == TaskStatus.COMPLETED
         finally:

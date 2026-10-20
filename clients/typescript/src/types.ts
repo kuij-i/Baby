@@ -179,6 +179,8 @@ export interface PlanView {
   steps: PlanStepView[];
   created_at: string;
   reasoning: string;
+  approval_required?: boolean;
+  planner_mode?: string;
 }
 
 /** Schema for ReadinessResponse */
