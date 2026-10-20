@@ -160,6 +160,9 @@ class Plan(BaseModel):
     steps: List[PlanStep] = Field(min_length=1)
     created_at: UTCDatetime = Field(default_factory=utc_now)
     reasoning: str = Field(..., min_length=1)
+    # One admin approval for the whole ordered plan is required before any step runs.
+    approval_required: bool = False
+    planner_mode: str = "rule"
 
 
 class ExecutionContext(BaseModel):

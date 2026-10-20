@@ -782,7 +782,7 @@ class TestApprovals:
             runtime.shutdown()
         assert (repo / ".git" / "config").read_text(encoding="utf-8") == "[core]\n"
 
-    async def test_high_priority_plan_step_requires_approval(self, stores):
+    async def test_high_priority_plan_requires_approval(self, stores):
         bootstrap_scripted_agent()
         runtime = WorkerRuntime(_runtime_config())
         runtime.startup()
@@ -790,7 +790,7 @@ class TestApprovals:
             record = _submit(runtime.queue, "privileged", priority=9)
             assert await self._execute_next(runtime) == TaskStatus.AWAITING_APPROVAL
             request = task_tracker.get_task(record.task_id).approvals[0]  # type: ignore[union-attr]
-            assert request.action_type == "plan_step:1"
+            assert request.action_type == "plan"
             approval_service.decide(record.task_id, request.request_id, True, "admin-user")
             assert await self._execute_next(runtime) == TaskStatus.COMPLETED
         finally:

@@ -46,6 +46,8 @@ class PlanView(BaseModel):
     steps: List[PlanStepView]
     created_at: datetime
     reasoning: str
+    approval_required: bool = False
+    planner_mode: str = "rule"
 
 
 class AgentResultView(BaseModel):

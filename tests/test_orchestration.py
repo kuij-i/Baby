@@ -56,13 +56,13 @@ class TestTaskPlanner:
     async def test_plan_high_priority_task(self) -> None:
         task = Task(title="High Priority Task", description="Urgent execution", priority=9)
         plan = await task_planner.plan(task)
-        assert any(step.approval_required for step in plan.steps)
+        assert plan.approval_required is True and plan.planner_mode == "rule"
 
     @pytest.mark.asyncio
     async def test_plan_low_priority_task(self) -> None:
         task = Task(title="Low Priority Task", description="Standard execution", priority=2)
         plan = await task_planner.plan(task)
-        assert not any(step.approval_required for step in plan.steps)
+        assert plan.approval_required is False and not any(step.approval_required for step in plan.steps)
 
 
 class TestSelectionLogic:

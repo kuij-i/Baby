@@ -236,6 +236,15 @@ class TestPlan:
         )
         assert plan.task_id == task_id
         assert len(plan.steps) == 1
+        assert plan.approval_required is False and plan.planner_mode == "rule"
+
+    def test_plan_without_planner_fields_loads_with_defaults(self) -> None:
+        """Plans stored before plan-level approval existed still validate."""
+        stored = Plan(task_id=TaskId(), steps=[PlanStep(step_id=1, description="s")], reasoning="r")
+        data = stored.model_dump(mode="json")
+        del data["approval_required"], data["planner_mode"]
+        loaded = Plan.model_validate(data)
+        assert loaded.approval_required is False and loaded.planner_mode == "rule"
 
     def test_plan_requires_at_least_one_step(self) -> None:
         """Test that Plan requires at least one step."""

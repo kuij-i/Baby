@@ -4,7 +4,7 @@ Coordinates task planning, agent selection, execution, verification, and audit
 logging while keeping execution bounded and deterministic.
 """
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from baby.agents import agent_registry
 from baby.audit import audit_log
@@ -12,10 +12,34 @@ from baby.core import AgentId, AgentResult, AuditEventType, ExecutionContext, Pl
 from baby.errors import InvalidStateTransitionError
 from baby.logging import get_logger
 from baby.observability import task_tracker
+from baby.observability.redaction import redact_sensitive_data
 from baby.planning.planner import task_planner
 from baby.planning.selection import selection_logic
 
 logger = get_logger(__name__)
+
+ORCHESTRATOR_AGENT_ID = AgentId(id="orchestrator")
+PLAN_APPROVAL_OPERATION = "plan"
+PLAN_APPROVAL_PERMISSION = "plan_approval"
+
+
+def plan_requires_approval(plan: Plan) -> bool:
+    """True if the whole plan needs one admin approval before any step runs.
+
+    ``PlanStep.approval_required`` is honoured too, so plans stored before plan-level approvals
+    existed still require approval.
+    """
+    return plan.approval_required or any(step.approval_required for step in plan.steps)
+
+
+def plan_approval_arguments(plan: Plan, priority: int) -> Dict[str, Any]:
+    """Arguments a plan approval is bound to: the full ordered step list and the task priority."""
+    return {"steps": [step.description for step in plan.steps], "priority": priority}
+
+
+def _plan_created_details(plan: Plan) -> Dict[str, Any]:
+    details = {"step_count": len(plan.steps), "planner_mode": plan.planner_mode, "reasoning": plan.reasoning}
+    return dict(redact_sensitive_data(details))
 
 
 class Orchestrator:
@@ -59,27 +83,25 @@ class Orchestrator:
                 AuditEventType.PLAN_CREATED,
                 task_id=task.id,
                 user_id=user_id or task.user_id,
-                details={"step_count": len(plan.steps), "reasoning": plan.reasoning},
+                details=_plan_created_details(plan),
             )
 
-            result: Optional[AgentResult] = None
-            for step in plan.steps:
-                result = await self._execute_step(step, task, plan, user_id or task.user_id)
-                if not result.success:
-                    task_tracker.update_status(
-                        task.id,
-                        TaskStatus.FAILED,
-                        error=result.error,
-                        result=result,
-                        agent_id=result.agent_id,
-                    )
-                    audit_log.record(
-                        AuditEventType.TASK_FAILED,
-                        task_id=task.id,
-                        user_id=user_id or task.user_id,
-                        details={"step_id": step.step_id, "error": result.error},
-                    )
-                    return result
+            result = await self._run_steps(plan, task, user_id or task.user_id)
+            if result is not None and not result.success:
+                task_tracker.update_status(
+                    task.id,
+                    TaskStatus.FAILED,
+                    error=result.error,
+                    result=result,
+                    agent_id=result.agent_id,
+                )
+                audit_log.record(
+                    AuditEventType.TASK_FAILED,
+                    task_id=task.id,
+                    user_id=user_id or task.user_id,
+                    details={"step_id": result.step_id, "error": result.error},
+                )
+                return result
 
             task_tracker.update_status(
                 task.id,
@@ -124,54 +146,85 @@ class Orchestrator:
         while it still holds the task's lease (fenced writes), so a worker that lost its
         claim can never record a result.
 
-        Plan steps marked ``approval_required`` are executed only with an admin-granted,
-        single-use approval bound to this task, engagement and step. Without one, an
-        approval request is recorded and a failed result is returned; the worker then
-        parks the task in AWAITING_APPROVAL.
+        The plan is created once and stored on the task; a task resumed after an approval
+        pause reuses its stored plan (the planner is not called again) and re-runs it from
+        step 1, so its steps and approval digests never change.
+
+        A plan that requires approval runs only with one admin-granted, single-use approval
+        bound to this task, engagement and the full ordered step list. Without one, an
+        approval request is recorded and a failed result is returned before any step runs;
+        the worker then parks the task in AWAITING_APPROVAL.
         """
         from baby.permissions.approvals import approval_service
 
         user_id = task.user_id
-        plan = await task_planner.plan(task)
-        task_tracker.set_plan(task.id, plan)
-        audit_log.record(
-            AuditEventType.PLAN_CREATED,
-            task_id=task.id,
-            user_id=user_id,
-            details={"step_count": len(plan.steps), "reasoning": plan.reasoning},
-        )
+        plan = await self._stored_or_new_plan(task)
 
+        if plan_requires_approval(plan):
+            granted = approval_service.authorize_or_request(
+                task_id=task.id,
+                agent_id=ORCHESTRATOR_AGENT_ID,
+                engagement_id=user_id,
+                operation=PLAN_APPROVAL_OPERATION,
+                permission=PLAN_APPROVAL_PERMISSION,
+                arguments=plan_approval_arguments(plan, task.priority),
+                reason=f"Plan with {len(plan.steps)} step(s) requires approval (task priority {task.priority})",
+            )
+            audit_log.record(
+                AuditEventType.APPROVAL_GRANTED if granted else AuditEventType.APPROVAL_REQUESTED,
+                task_id=task.id,
+                user_id=user_id,
+                details={
+                    "operation": PLAN_APPROVAL_OPERATION,
+                    "step_count": len(plan.steps),
+                    "result": "approval_consumed" if granted else "approval_required",
+                },
+            )
+            if not granted:
+                return AgentResult(
+                    step_id=plan.steps[0].step_id,
+                    agent_id=ORCHESTRATOR_AGENT_ID,
+                    success=False,
+                    error=f"Approval required for plan ({len(plan.steps)} step(s))",
+                )
+
+        return await self._run_steps(plan, task, user_id)
+
+    async def _stored_or_new_plan(self, task: Task) -> Plan:
+        """Return the task's stored plan, or plan it now and store the plan (first writer wins)."""
+        record = task_tracker.get_task(task.id)
+        if record is not None and record.plan is not None:
+            logger.info("Reusing stored plan", task_id=str(task.id), step_count=len(record.plan.steps))
+            return record.plan
+
+        new_plan = await task_planner.plan(task)
+        stored, created = task_tracker.set_plan_if_absent(task.id, new_plan)
+        plan = stored or new_plan
+        if created or stored is None:
+            audit_log.record(
+                AuditEventType.PLAN_CREATED,
+                task_id=task.id,
+                user_id=task.user_id,
+                details=_plan_created_details(plan),
+            )
+        return plan
+
+    async def _run_steps(self, plan: Plan, task: Task, user_id: Optional[str]) -> Optional[AgentResult]:
+        """Run plan steps in order; the first failed step stops the plan.
+
+        For multi-step plans a failed result's error names the step that failed.
+        """
+        total = len(plan.steps)
+        previous: Dict[int, AgentResult] = {}
         result: Optional[AgentResult] = None
-        for step in plan.steps:
-            if step.approval_required:
-                granted = approval_service.authorize_or_request(
-                    task_id=task.id,
-                    agent_id=AgentId(id="orchestrator"),
-                    engagement_id=user_id,
-                    operation=f"plan_step:{step.step_id}",
-                    permission="plan_step_approval",
-                    arguments={"description": step.description, "priority": task.priority},
-                    reason=f"Plan step {step.step_id} requires approval (task priority {task.priority})",
-                )
-                audit_log.record(
-                    AuditEventType.APPROVAL_GRANTED if granted else AuditEventType.APPROVAL_REQUESTED,
-                    task_id=task.id,
-                    user_id=user_id,
-                    details={
-                        "step_id": step.step_id,
-                        "result": "approval_consumed" if granted else "approval_required",
-                    },
-                )
-                if not granted:
-                    return AgentResult(
-                        step_id=step.step_id,
-                        agent_id=AgentId(id="orchestrator"),
-                        success=False,
-                        error=f"Approval required for plan step {step.step_id}",
-                    )
-            result = await self._execute_step(step, task, plan, user_id)
+        for index, step in enumerate(plan.steps, start=1):
+            result = await self._execute_step(step, task, plan, user_id, previous)
             if not result.success:
+                if total > 1:
+                    error = f"Plan step {index} of {total} failed: {result.error or 'unknown error'}"
+                    result = result.model_copy(update={"error": error})
                 return result
+            previous[step.step_id] = result
         return result
 
     async def _execute_step(
@@ -180,6 +233,7 @@ class Orchestrator:
         task: Task,
         plan: Plan,
         user_id: Optional[str] = None,
+        previous_results: Optional[Dict[int, AgentResult]] = None,
     ) -> AgentResult:
         """Execute one planned step, returning a typed failure when unassigned."""
         del plan  # Reserved for dependency-aware execution in a later phase.
@@ -207,6 +261,7 @@ class Orchestrator:
             plan_step=step,
             task=task,
             agent=agent_spec,
+            previous_results=dict(previous_results or {}),
         )
         try:
             return await agent.execute(context)

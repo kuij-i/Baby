@@ -403,13 +403,30 @@ characters, e.g. a UUID) so clients can retry safely:
 
 ### Approval Lifecycle
 
-- High-risk operations (file writes, priority ≥ 8 plan steps) pause the task in `AWAITING_APPROVAL`
-  until an admin decides via `POST /api/v1/tasks/{task_id}/approvals/{request_id}`.
+- High-risk operations (file writes, and the whole plan of a priority ≥ 8 task) pause the task in
+  `AWAITING_APPROVAL` until an admin decides via `POST /api/v1/tasks/{task_id}/approvals/{request_id}`.
+  A priority ≥ 8 task needs **one** approval for its whole plan (operation `plan`, bound to the ordered
+  list of step descriptions) before any step runs; file writes inside a step still need their own approval.
 - Requests left undecided, and approvals granted but not used, expire after `APPROVAL_TTL_SECONDS`
   (default 24h). Deciding an expired request returns `409` and fails the task; worker recovery also
   fails expired tasks closed.
-- A resumed task re-runs from the start, so a task may pause for approval at most
+- A resumed task re-runs its stored plan from step 1, so a task may pause for approval at most
   `MAX_APPROVAL_ROUNDS` times (default 3); the next approval request fails it.
+
+### Planning
+
+A task is planned once, when a worker first runs it; the plan is stored with the task and reused if
+the task resumes after an approval, so its steps (and the approval bound to them) never change. Steps
+run in order and the first failed step stops the task (`Plan step 2 of 3 failed: …`).
+
+| Setting | Default | Bounds | Meaning |
+|---|---|---|---|
+| `PLANNER_MODE` | `rule` | `rule` / `model` | `rule`: one step carrying the task description. `model`: the configured model provider splits the task into steps |
+| `PLANNER_MAX_STEPS` | `5` | 1–20 | most steps a model plan may have |
+
+In `model` mode the provider must return strict JSON (`{"steps": [{"description": "..."}]}`). Malformed
+output, more than `PLANNER_MAX_STEPS` steps, a provider error or no configured provider **fail the task**;
+Baby never guesses a plan. The model only describes steps — it cannot pick agents or tools.
 
 ### Explicitly Unsupported Features
 

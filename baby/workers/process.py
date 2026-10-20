@@ -40,6 +40,8 @@ FORWARDABLE_SETTINGS = frozenset(
         "worker_max_task_seconds",
         "approval_ttl_seconds",
         "max_approval_rounds",
+        "planner_mode",
+        "planner_max_steps",
         "log_level",
         "model_provider",
         "default_model",

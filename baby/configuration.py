@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # A task may pause for approval at most this many times; the next request fails it. 1..20.
     max_approval_rounds: int = 3
 
+    # Planning: "rule" (deterministic single step, default) or "model" (the configured provider decomposes the
+    # task into at most planner_max_steps steps, 1..20; malformed output fails the task closed).
+    planner_mode: str = "rule"
+    planner_max_steps: int = 5
+
     # Coding Subsystem
     coding_repo_root: Optional[str] = None
     coding_max_file_size_bytes: int = 1_048_576  # 1 MB default limit
@@ -147,6 +152,7 @@ def validate_settings(cfg: "Settings") -> list:
 
     _validate_worker_settings(cfg)
     _validate_approval_settings(cfg)
+    warnings.extend(_validate_planner_settings(cfg))
     _validate_api_auth_settings(cfg)
     warnings.extend(_validate_model_provider_settings(cfg))
 
@@ -220,6 +226,26 @@ def _validate_approval_settings(cfg: "Settings") -> None:
     rounds = cfg.max_approval_rounds
     if isinstance(rounds, bool) or not isinstance(rounds, int) or not (1 <= rounds <= 20):
         raise ConfigurationError(f"max_approval_rounds must be an integer between 1 and 20, got {rounds!r}")
+
+
+PLANNER_MODE_CHOICES = ("rule", "model")
+
+
+def _validate_planner_settings(cfg: "Settings") -> list:
+    """Fail closed on an unknown planner mode or an out-of-bounds step limit; warn when model planning has no key."""
+    from baby.errors import ConfigurationError
+
+    mode = (cfg.planner_mode or "").strip().lower()
+    if mode not in PLANNER_MODE_CHOICES:
+        raise ConfigurationError(
+            f"planner_mode must be one of {', '.join(PLANNER_MODE_CHOICES)}, got {cfg.planner_mode!r}"
+        )
+    steps = cfg.planner_max_steps
+    if isinstance(steps, bool) or not isinstance(steps, int) or not (1 <= steps <= 20):
+        raise ConfigurationError(f"planner_max_steps must be an integer between 1 and 20, got {steps!r}")
+    if mode == "model" and not ((cfg.nvidia_api_key or "").strip() or (cfg.openai_api_key or "").strip()):
+        return ["planner_mode='model' but no model provider key is configured; every task will fail to plan"]
+    return []
 
 
 def _validate_api_auth_settings(cfg: "Settings") -> None:
