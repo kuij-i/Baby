@@ -13,7 +13,7 @@ orchestrator), so a non-deterministic planner can never change a task's plan or 
 """
 
 import json
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from baby.core import Plan, PlanStep, Task
 from baby.errors import PlanningError
@@ -21,6 +21,9 @@ from baby.logging import get_logger
 from baby.observability.redaction import redact_sensitive_data
 from baby.providers.base import ModelProvider
 from baby.providers.types import ChatMessage
+
+if TYPE_CHECKING:
+    from baby.providers.registry import ProviderRegistry
 
 logger = get_logger(__name__)
 
@@ -68,15 +71,22 @@ class ModelPlanner:
 
     mode = "model"
 
-    def __init__(self, provider: Optional[ModelProvider] = None, max_steps: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        provider: Optional[ModelProvider] = None,
+        max_steps: Optional[int] = None,
+        registry: Optional["ProviderRegistry"] = None,
+    ) -> None:
         """Initialize the model planner.
 
         Args:
             provider: Provider to use; defaults to the registry's default provider at plan time.
             max_steps: Maximum number of steps; defaults to ``settings.planner_max_steps``.
+            registry: Provider registry to take the default provider from; defaults to ``provider_registry``.
         """
         self._provider = provider
         self._max_steps = max_steps
+        self._registry = registry
 
     @property
     def max_steps(self) -> int:
@@ -93,8 +103,9 @@ class ModelPlanner:
         else:
             from baby.providers.registry import provider_registry
 
+            registry = self._registry if self._registry is not None else provider_registry
             try:
-                provider = provider_registry.get_default()
+                provider = registry.get_default()
             except Exception as exc:
                 raise PlanningError("planner_mode='model' but no model provider is configured") from exc
         if not provider.is_available():

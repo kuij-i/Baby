@@ -468,6 +468,12 @@ python -m pytest tests/test_contracts.py
 python -m pytest tests/test_contracts.py::TestTaskId::test_task_id_creation
 ```
 
+**Embedding / testing with `BabyContext`.** `baby.runtime_context.build_default_context(settings, database_url)`
+builds an isolated set of services (database, audit log, task tracker, registries, permissions, approvals,
+tool executor, planner, orchestrator) so several runtimes can run in one process without touching the global
+defaults; pass it to `WorkerRuntime(config, context=ctx)` and wire agents with
+`CodingAgent(..., tool_executor=ctx.tool_executor, audit=ctx.audit_log)`. See `tests/test_runtime_context.py`.
+
 ### Running the observability API and workers
 
 ```bash

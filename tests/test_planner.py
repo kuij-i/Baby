@@ -391,7 +391,6 @@ class TestMultiStepExecution:
         failed = _audit(AuditEventType.TASK_FAILED)
         assert failed[-1].details["step_id"] == 2
 
-
     async def test_in_process_planning_failure_fails_the_task(self):
         task = Task(title="t", description="x", user_id=ENG)
         with _model_planner(PlanProvider("nonsense")), patch.object(settings, "planner_mode", "model"):

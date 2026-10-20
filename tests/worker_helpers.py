@@ -139,3 +139,20 @@ def idempotent_submit_racer(database_url: str, key: str, barrier: Any, results: 
     record, replayed = queue.submit_idempotent(task, IdempotencyScope("operator-user", "eng-race", key))
     results.put((str(record.task_id), replayed))
     db.close()
+
+
+def import_modules_in_order(module_names: List[str], results: Any) -> None:
+    """Child-process importer: import modules in the given order in a fresh interpreter.
+
+    Puts ``None`` on success, or the error text, so a parent test can detect import cycles that
+    only show up for a particular first import.
+    """
+    import importlib
+
+    try:
+        for name in module_names:
+            importlib.import_module(name)
+    except Exception as exc:  # report, the parent asserts
+        results.put(f"{type(exc).__name__}: {exc}")
+        return
+    results.put(None)

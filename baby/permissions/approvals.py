@@ -28,6 +28,7 @@ from baby.errors import ApprovalExpiredError, InvalidStateTransitionError, TaskN
 from baby.logging import get_logger
 
 if TYPE_CHECKING:
+    from baby.observability.tasks import TaskTracker
     from baby.persistence.sqlite_tasks import SQLiteTaskStore
 
 logger = get_logger(__name__)
@@ -102,7 +103,18 @@ def expired_approval_reason(record: TaskRecord, now: datetime, ttl: timedelta) -
 class ApprovalService:
     """Creates, decides and consumes approval requests stored on durable task records."""
 
+    def __init__(self, *, task_tracker: Optional["TaskTracker"] = None) -> None:
+        """Initialize the service.
+
+        Args:
+            task_tracker: Tracker whose durable store holds the approvals; defaults to the
+                process-wide ``task_tracker``, resolved when it is used.
+        """
+        self._task_tracker = task_tracker
+
     def _store(self) -> Optional["SQLiteTaskStore"]:
+        if self._task_tracker is not None:
+            return self._task_tracker.store
         from baby.observability.tasks import task_tracker
 
         return task_tracker.store

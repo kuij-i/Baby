@@ -9,8 +9,11 @@ Verifies:
 - Preservation of analysis-only trading rule
 """
 
+import ast
+import multiprocessing
 import tempfile
 from pathlib import Path
+from typing import List
 from unittest.mock import patch
 
 import pytest
@@ -201,3 +204,64 @@ class TestTradingExecutionSafeguards:
     def test_financial_action_requires_explicit_permission(self):
         # Financial actions in core contracts are defined but restricted
         assert PermissionCategory.FINANCIAL_ACTION.value == "financial_action"
+
+
+# ============================================================================
+# 5. RUNTIME CONTEXT BOUNDARY
+# ============================================================================
+
+
+def _module_level_imports(path: Path) -> List[str]:
+    """Modules imported when ``path`` is imported: top-level statements, including inside top-level
+    ``try``/``if`` blocks, but not inside functions, classes or ``if TYPE_CHECKING:`` blocks."""
+
+    def collect(statements: List[ast.stmt]) -> List[str]:
+        names: List[str] = []
+        for node in statements:
+            if isinstance(node, ast.Import):
+                names.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names.append(node.module)
+            elif isinstance(node, ast.If) and "TYPE_CHECKING" not in ast.unparse(node.test):
+                names.extend(collect(node.body) + collect(node.orelse))
+            elif isinstance(node, ast.Try):
+                names.extend(collect(node.body) + collect(node.orelse) + collect(node.finalbody))
+                for handler in node.handlers:
+                    names.extend(collect(handler.body))
+        return names
+
+    return collect(ast.parse(path.read_text(encoding="utf-8")).body)
+
+
+class TestRuntimeContextBoundary:
+    def test_no_module_imports_runtime_context_at_import_time(self):
+        # runtime_context imports every subsystem; importing it at module level anywhere in baby/
+        # would create import cycles (e.g. planning <-> orchestration). Only lazy imports are allowed.
+        root = Path(__file__).resolve().parent.parent / "baby"
+        offenders = [
+            str(path.relative_to(root))
+            for path in root.rglob("*.py")
+            if path.name != "runtime_context.py" and "baby.runtime_context" in _module_level_imports(path)
+        ]
+        assert offenders == []
+
+    @pytest.mark.parametrize(
+        "order",
+        [
+            ["baby.runtime_context", "baby.planning.planner", "baby.orchestration.orchestrator", "baby.api.app"],
+            ["baby.planning.planner", "baby.runtime_context"],
+            ["baby.orchestration", "baby.runtime_context", "baby.workers.process"],
+        ],
+    )
+    def test_runtime_context_imports_cleanly_in_a_fresh_interpreter(self, order):
+        from tests.worker_helpers import import_modules_in_order
+
+        ctx = multiprocessing.get_context("spawn")
+        results = ctx.Queue()
+        proc = ctx.Process(target=import_modules_in_order, args=(order, results))
+        proc.start()
+        try:
+            outcome = results.get(timeout=60)
+        finally:
+            proc.join(timeout=30)
+        assert outcome is None, outcome
