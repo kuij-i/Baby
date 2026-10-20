@@ -18,7 +18,7 @@ Recovery is idempotent and safe to run concurrently from the API, supervisors an
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Callable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 from baby.audit import audit_log
 from baby.core import AuditEventType, TaskRecord, TaskStatus, WorkerStatus, ensure_valid_transition
@@ -27,6 +27,9 @@ from baby.observability.metrics import metrics_collector
 from baby.persistence.sqlite_tasks import SQLiteTaskStore
 from baby.persistence.sqlite_workers import LIVE_WORKER_STATUSES, SQLiteWorkerStore, ts
 from baby.workers.queue import utcnow
+
+if TYPE_CHECKING:
+    from baby.audit import AuditLog
 
 logger = get_logger(__name__)
 
@@ -61,6 +64,7 @@ class WorkerRecovery:
         worker_store: Optional[SQLiteWorkerStore] = None,
         stale_timeout_seconds: Optional[float] = None,
         clock: Callable[[], datetime] = utcnow,
+        audit: Optional["AuditLog"] = None,
     ) -> None:
         from baby.configuration import settings
 
@@ -73,6 +77,12 @@ class WorkerRecovery:
             )
         )
         self._clock = clock
+        self._audit = audit
+
+    @property
+    def audit(self) -> "AuditLog":
+        """Audit log recovery events are written to (defaults to ``audit_log``)."""
+        return self._audit if self._audit is not None else audit_log
 
     def recover(self, now: Optional[datetime] = None) -> RecoveryReport:
         """Mark stale workers, revoke expired/orphaned leases and expire stale approvals (fail closed)."""
@@ -216,7 +226,7 @@ class WorkerRecovery:
         for worker_id in report.stale_workers:
             logger.warning("Worker marked lost", worker_id=worker_id, reason=worker_reason)
             metrics_collector.increment_counter("workers_lost_total", labels={"reason": worker_reason})
-            audit_log.record(
+            self.audit.record(
                 AuditEventType.WORKER_STALE,
                 details={"worker_id": worker_id, "reason": worker_reason},
             )
@@ -224,10 +234,10 @@ class WorkerRecovery:
             logger.warning("Task failed closed by worker recovery", task_id=str(record.task_id))
             details = {"worker_id": record.assigned_worker_id, "error": record.error, "replayed": False}
             for event in (AuditEventType.TASK_RECOVERED, AuditEventType.TASK_FAILED):
-                audit_log.record(event, task_id=record.task_id, user_id=record.user_id, details=details)
+                self.audit.record(event, task_id=record.task_id, user_id=record.user_id, details=details)
         for record in report.expired_approval_tasks:
             logger.warning("Task failed closed: approval expired", task_id=str(record.task_id))
-            audit_log.record(
+            self.audit.record(
                 AuditEventType.TASK_FAILED,
                 task_id=record.task_id,
                 user_id=record.user_id,

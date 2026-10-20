@@ -26,19 +26,25 @@ import socket
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Protocol
 from uuid import uuid4
 
 from baby.agents import agent_registry
 from baby.audit import audit_log
 from baby.core import AgentResult, AuditEventType, Task, TaskStatus, WorkerStatus
-from baby.errors import LeaseLostError
+from baby.errors import ConfigurationError, LeaseLostError
 from baby.logging import get_logger
 from baby.observability.metrics import metrics_collector
 from baby.persistence.sqlite_tasks import SQLiteTaskStore
 from baby.persistence.sqlite_workers import SQLiteWorkerStore
 from baby.workers.queue import ClaimedTask, DurableTaskQueue, LeaseState, utcnow
 from baby.workers.recovery import WorkerRecovery
+
+if TYPE_CHECKING:
+    from baby.agents.registry import AgentRegistry
+    from baby.audit import AuditLog
+    from baby.permissions.approvals import ApprovalService
+    from baby.runtime_context import BabyContext
 
 logger = get_logger(__name__)
 
@@ -100,12 +106,42 @@ class WorkerRuntime:
         executor: Optional[TaskExecutor] = None,
         stop_signal: Optional[StopSignal] = None,
         clock: Callable[[], datetime] = utcnow,
+        context: Optional["BabyContext"] = None,
     ) -> None:
+        """Initialize the runtime.
+
+        Args:
+            config: Worker identity and timing configuration.
+            task_store: Durable task store; defaults to the context's store, else a new default store.
+            worker_store: Durable worker store; defaults to one on the task store's database.
+            executor: Coroutine that executes a claimed task; defaults to the context's (or the default)
+                orchestrator's ``execute_claimed_task``.
+            stop_signal: External stop event (e.g. from the supervisor).
+            clock: Clock used for leases and heartbeats.
+            context: Services this worker uses (audit log, approvals, agent registry, orchestrator).
+                Without one, the process-wide singletons are used.
+
+        Raises:
+            ConfigurationError: The context has no durable task store.
+        """
         self.config = config
+        self._context = context
+        if context is not None and task_store is None:
+            task_store = context.task_tracker.store
+            if task_store is None:
+                raise ConfigurationError("WorkerRuntime requires a context with a durable (SQLite) task store")
+        if context is not None and executor is None:
+            executor = context.orchestrator.execute_claimed_task
         self._tasks = task_store or SQLiteTaskStore()
         self._workers = worker_store or SQLiteWorkerStore(self._tasks.db)
         self._queue = DurableTaskQueue(self._tasks, self._workers, config.lease_duration, clock=clock)
-        self._recovery = WorkerRecovery(self._tasks, self._workers, config.stale_timeout, clock=clock)
+        self._recovery = WorkerRecovery(
+            self._tasks,
+            self._workers,
+            config.stale_timeout,
+            clock=clock,
+            audit=context.audit_log if context is not None else None,
+        )
         self._executor = executor or _default_executor
         self._external_stop = stop_signal
         self._clock = clock
@@ -119,6 +155,25 @@ class WorkerRuntime:
     @property
     def worker_id(self) -> str:
         return self.config.worker_id
+
+    @property
+    def audit(self) -> "AuditLog":
+        """Audit log worker events are written to."""
+        return self._context.audit_log if self._context is not None else audit_log
+
+    @property
+    def agents(self) -> "AgentRegistry":
+        """Agent registry this worker reports hosting."""
+        return self._context.agent_registry if self._context is not None else agent_registry
+
+    @property
+    def approvals(self) -> "ApprovalService":
+        """Approval service consulted when a task stops for approval."""
+        if self._context is not None:
+            return self._context.approval_service
+        from baby.permissions.approvals import approval_service
+
+        return approval_service
 
     @property
     def queue(self) -> DurableTaskQueue:
@@ -155,7 +210,7 @@ class WorkerRuntime:
                 "platform": platform.system(),
                 "python": platform.python_version(),
                 "slot": self.config.slot,
-                "agents": ",".join(sorted(str(a.spec.id) for a in agent_registry.list_agents())),
+                "agents": ",".join(sorted(str(a.spec.id) for a in self.agents.list_agents())),
             },
         )
         try:
@@ -172,7 +227,7 @@ class WorkerRuntime:
         self._workers.set_status(self.worker_id, WorkerStatus.IDLE, self._clock())
         self._started = True
         metrics_collector.increment_counter("worker_started_total")
-        audit_log.record(
+        self.audit.record(
             AuditEventType.WORKER_STARTED,
             details={"worker_id": self.worker_id, "pid": os.getpid(), "slot": self.config.slot},
         )
@@ -193,7 +248,7 @@ class WorkerRuntime:
             logger.error("Could not record worker stop", worker_id=self.worker_id, error=str(exc))
         metrics_collector.increment_counter("worker_stopped_total", labels={"status": final.value})
         try:
-            audit_log.record(
+            self.audit.record(
                 AuditEventType.WORKER_STOPPED,
                 details={
                     "worker_id": self.worker_id,
@@ -254,7 +309,7 @@ class WorkerRuntime:
         metrics_collector.increment_counter("worker_heartbeat_failures_total")
         logger.warning("Worker heartbeat failed", worker_id=self.worker_id, reason=reason)
         try:
-            audit_log.record(
+            self.audit.record(
                 AuditEventType.WORKER_HEARTBEAT_FAILED,
                 details={"worker_id": self.worker_id, "reason": reason},
             )
@@ -280,7 +335,7 @@ class WorkerRuntime:
     # ------------------------------------------------------------------
 
     def _audit(self, event: AuditEventType, claimed: ClaimedTask, **details: Any) -> None:
-        audit_log.record(
+        self.audit.record(
             event,
             task_id=claimed.record.task_id,
             user_id=claimed.record.user_id,
@@ -348,8 +403,8 @@ class WorkerRuntime:
             return self._write(claimed, TaskStatus.COMPLETED, result=result)
 
         from baby.configuration import settings
-        from baby.permissions.approvals import approval_service
 
+        approval_service = self.approvals
         if approval_service.has_pending(task_id):
             # Each resume re-runs the task from the start, so an unbounded series of approval
             # pauses could keep asking an admin to re-approve; cap it and fail closed.

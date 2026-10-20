@@ -389,6 +389,47 @@ class TestWorkerStartupSandboxSafety:
             name: str(repo.resolve()) for name in ("list_files", "read_file", "write_file")
         }
 
+    def test_default_bootstrap_with_context_registers_only_into_that_context(self, tmp_path: Path):
+        from baby.runtime_context import build_default_context, close_context
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        ctx = build_default_context(settings, f"sqlite:///{tmp_path / 'ctx.db'}")
+        try:
+            with patch.object(settings, "coding_repo_root", str(repo)):
+                with patch(
+                    "baby.tools.coding.path_resolver._default_database_path", return_value=str(tmp_path / "b.db")
+                ):
+                    default_bootstrap(ctx)
+            agent = ctx.agent_registry.get("coding-agent")
+            assert agent.executor is ctx.tool_executor and agent.audit is ctx.audit_log  # type: ignore[attr-defined]
+            perms = {p.category: p.level for p in ctx.permission_manager.get_agent_permissions("coding-agent")}
+            assert perms == {
+                PermissionCategory.LOCAL_READ: PermissionLevel.ALLOW,
+                PermissionCategory.LOCAL_WRITE: PermissionLevel.APPROVAL_REQUIRED,
+            }
+            # The process-wide defaults were not touched.
+            assert agent_registry.list_agents() == []
+            assert permission_manager.get_agent_permissions("coding-agent") == []
+        finally:
+            close_context(ctx)
+
+    def test_run_bootstrap_passes_the_context_only_to_bootstraps_that_take_one(self):
+        from baby.workers.bootstrap import run_bootstrap
+
+        calls = []
+
+        def legacy() -> None:
+            calls.append("legacy")
+
+        def contextual(context) -> None:  # type: ignore[no-untyped-def]
+            calls.append(context)
+
+        marker = object()
+        run_bootstrap(legacy, marker)  # type: ignore[arg-type]
+        run_bootstrap(contextual, marker)  # type: ignore[arg-type]
+        assert calls == ["legacy", marker]
+
     @pytest.mark.parametrize("unsafe", ["missing", "contains_db"])
     def test_supervisor_fails_before_spawning_workers(self, tmp_path: Path, unsafe):
         root = None if unsafe == "missing" else str(tmp_path)

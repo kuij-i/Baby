@@ -2,7 +2,7 @@
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from baby.agents.base import Agent
 from baby.audit import audit_log
@@ -28,6 +28,11 @@ from baby.tools.coding.list_files import ListFilesTool
 from baby.tools.coding.read_file import ReadFileTool
 from baby.tools.coding.write_file import WriteFileTool
 from baby.tools.executor import tool_executor
+
+if TYPE_CHECKING:
+    from baby.audit import AuditLog
+    from baby.providers.registry import ProviderRegistry
+    from baby.tools.executor import ToolExecutor
 
 logger = get_logger(__name__)
 
@@ -87,10 +92,29 @@ class CodingAgent(Agent):
         repo_root: Optional[str] = None,
         max_iterations: Optional[int] = None,
         max_tool_calls_per_iteration: Optional[int] = None,
+        *,
+        tool_executor: Optional["ToolExecutor"] = None,
+        audit: Optional["AuditLog"] = None,
+        providers: Optional["ProviderRegistry"] = None,
     ) -> None:
+        """Initialize the CodingAgent.
+
+        Args:
+            spec: Agent specification; defaults to ``create_default_coding_spec()``.
+            provider: Model provider; defaults to the provider registry's default at execution time.
+            repo_root: Repository root the coding tools are confined to.
+            max_iterations: Model loop iteration bound; defaults to ``settings.coding_max_iterations``.
+            max_tool_calls_per_iteration: Tool calls per iteration bound.
+            tool_executor: Executor every tool call goes through; defaults to ``tool_executor``.
+            audit: Audit log; defaults to ``audit_log``.
+            providers: Provider registry used when no ``provider`` is given; defaults to ``provider_registry``.
+        """
         actual_spec = spec or create_default_coding_spec()
         super().__init__(actual_spec)
         self._provider = provider
+        self._tool_executor = tool_executor
+        self._audit = audit
+        self._providers = providers
         self._repo_root = repo_root
         self._max_iterations = max_iterations
         self._max_tool_calls_per_iteration = max_tool_calls_per_iteration
@@ -101,6 +125,16 @@ class CodingAgent(Agent):
             "read_file": ReadFileTool(repo_root=repo_root),
             "write_file": WriteFileTool(repo_root=repo_root),
         }
+
+    @property
+    def executor(self) -> "ToolExecutor":
+        """Tool executor every tool call goes through."""
+        return self._tool_executor if self._tool_executor is not None else tool_executor
+
+    @property
+    def audit(self) -> "AuditLog":
+        """Audit log in use."""
+        return self._audit if self._audit is not None else audit_log
 
     @property
     def tools(self) -> Dict[str, Tool]:
@@ -142,7 +176,7 @@ class CodingAgent(Agent):
             if step.tool_name and step.tool_name in self._tools:
                 tool = self._tools[step.tool_name]
                 tool_args = self._extract_tool_args(step.description)
-                tool_result = await tool_executor.execute(
+                tool_result = await self.executor.execute(
                     tool=tool,
                     agent_id=self.spec.id,
                     task_id=context.task_id,
@@ -337,7 +371,7 @@ class CodingAgent(Agent):
 
                 tool = self._tools[tool_name]
                 try:
-                    tool_res = await tool_executor.execute(
+                    tool_res = await self.executor.execute(
                         tool=tool,
                         agent_id=self.spec.id,
                         task_id=context.task_id,
@@ -402,7 +436,7 @@ class CodingAgent(Agent):
         # Iteration limit reached without model conclusion
         error_msg = f"CodingAgent reached maximum iteration limit of {max_iterations} without completing task"
         logger.warning(error_msg, agent_id=self.id, max_iterations=max_iterations)
-        audit_log.record(
+        self.audit.record(
             AuditEventType.ERROR,
             task_id=context.task_id,
             agent_id=self.spec.id,
@@ -438,7 +472,7 @@ class CodingAgent(Agent):
         if words & {"list", "ls"}:
             tool = self._tools["list_files"]
             tool_args = self._extract_tool_args(step.description)
-            res = await tool_executor.execute(
+            res = await self.executor.execute(
                 tool=tool,
                 agent_id=self.spec.id,
                 task_id=context.task_id,
@@ -470,7 +504,8 @@ class CodingAgent(Agent):
         if self._provider:
             return self._provider
         try:
-            return provider_registry.get_default()
+            registry = self._providers if self._providers is not None else provider_registry
+            return registry.get_default()
         except Exception:
             return None
 

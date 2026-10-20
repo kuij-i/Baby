@@ -3,6 +3,7 @@
 from typing import List, Optional
 
 from baby.agents import agent_registry
+from baby.agents.registry import AgentRegistry
 from baby.core import (
     AgentSpec,
     PermissionCategory,
@@ -12,6 +13,7 @@ from baby.core import (
 )
 from baby.logging import get_logger
 from baby.tools import tool_registry
+from baby.tools.registry import ToolRegistry
 
 logger = get_logger(__name__)
 
@@ -21,6 +23,26 @@ class SelectionLogic:
 
     Uses capability matching to find appropriate agents and tools.
     """
+
+    def __init__(self, *, agents: Optional[AgentRegistry] = None, tools: Optional[ToolRegistry] = None) -> None:
+        """Initialize selection logic.
+
+        Args:
+            agents: Agent registry to select from; defaults to ``agent_registry``, resolved when used.
+            tools: Tool registry to select from; defaults to ``tool_registry``, resolved when used.
+        """
+        self._agents = agents
+        self._tools = tools
+
+    @property
+    def agents(self) -> AgentRegistry:
+        """Agent registry in use."""
+        return self._agents if self._agents is not None else agent_registry
+
+    @property
+    def tools(self) -> ToolRegistry:
+        """Tool registry in use."""
+        return self._tools if self._tools is not None else tool_registry
 
     async def select_agent(self, step: PlanStep, task: Task) -> Optional[AgentSpec]:
         """Select best agent for a step.
@@ -35,14 +57,14 @@ class SelectionLogic:
         # If agent specified, use that
         if step.agent_id:
             try:
-                agent = agent_registry.get(str(step.agent_id))
+                agent = self.agents.get(str(step.agent_id))
                 return agent.spec
             except Exception as e:
                 logger.warning(f"Specified agent not found: {e}")
                 return None
 
         # Otherwise, get first enabled agent
-        agents = agent_registry.list_agents()
+        agents = self.agents.list_agents()
         enabled_agents = [a for a in agents if a.spec.enabled]
 
         if not enabled_agents:
@@ -71,14 +93,14 @@ class SelectionLogic:
         # If tool specified, use that
         if step.tool_name:
             try:
-                tool = tool_registry.get(step.tool_name)
+                tool = self.tools.get(step.tool_name)
                 return tool.spec
             except Exception as e:
                 logger.warning(f"Specified tool not found: {e}")
                 return None
 
         # Otherwise, get first available tool
-        tools = tool_registry.list_tools()
+        tools = self.tools.list_tools()
 
         if not tools:
             logger.warning("No tools available")
@@ -102,7 +124,7 @@ class SelectionLogic:
         Returns:
             List of agent specs
         """
-        agents = agent_registry.get_agents_with_capability(capability_name)
+        agents = self.agents.get_agents_with_capability(capability_name)
         return [a.spec for a in agents]
 
     def get_tools_requiring_permission(self, permission: PermissionCategory) -> List[ToolSpec]:
@@ -114,7 +136,7 @@ class SelectionLogic:
         Returns:
             List of tool specs
         """
-        tools = tool_registry.get_tools_by_permission(permission.value)
+        tools = self.tools.get_tools_by_permission(permission.value)
         return [t.spec for t in tools]
 
 

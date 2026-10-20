@@ -91,13 +91,13 @@ def _install_signal_handlers(stop_event: Any) -> None:
 
 
 def _run(config: WorkerProcessConfig, stop_event: Any) -> int:
-    from baby.audit import audit_log
     from baby.configuration import settings, validate_settings
     from baby.errors import ConfigurationError
     from baby.logging import configure_logging, get_logger
     from baby.persistence.database import db_manager
     from baby.persistence.sqlite_audit import SQLiteAuditLog
-    from baby.workers.bootstrap import resolve_bootstrap
+    from baby.runtime_context import default_context
+    from baby.workers.bootstrap import resolve_bootstrap, run_bootstrap
     from baby.workers.runtime import WorkerRuntime, WorkerRuntimeConfig
 
     logger = get_logger("baby.workers.process")
@@ -114,18 +114,21 @@ def _run(config: WorkerProcessConfig, stop_event: Any) -> int:
         if settings.persistence_backend != "sqlite":
             raise ConfigurationError("Worker processes require persistence_backend='sqlite'")
 
-        db_manager.configure(config.database_url)
+        # Each worker process attaches its own context (never forwarded across the spawn boundary).
+        context = default_context()
+        context.db_manager.configure(config.database_url)
         if db_manager.is_memory:
             raise ConfigurationError("Worker processes require a file-backed SQLite database, not :memory:")
         db_manager.init_schema()
         if settings.audit_storage_type == "sqlite":
-            audit_log.use_backend(SQLiteAuditLog(db_manager))
+            context.audit_log.use_backend(SQLiteAuditLog(db_manager))
 
-        resolve_bootstrap(config.bootstrap)()
+        run_bootstrap(resolve_bootstrap(config.bootstrap), context)
 
         runtime = WorkerRuntime(
             WorkerRuntimeConfig.from_settings(worker_id=config.worker_id, slot=config.slot, max_tasks=config.max_tasks),
             stop_signal=stop_event,
+            context=context,
         )
         return asyncio.run(runtime.run())
     except ConfigurationError as exc:

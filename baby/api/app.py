@@ -50,12 +50,17 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """
     # ---- STARTUP ----
     # Import here to avoid circular imports at module load time
-    from baby.configuration import settings
     from baby.core import WorkerStatus
     from baby.logging import configure_logging
-    from baby.observability.tasks import task_tracker
-    from baby.observability.workers import worker_tracker
-    from baby.persistence.database import db_manager
+    from baby.runtime_context import default_context
+
+    # The API process attaches its context explicitly: the process-wide default services.
+    context = default_context()
+    application.state.baby_context = context
+    settings = context.settings
+    task_tracker = context.task_tracker
+    worker_tracker = context.worker_tracker
+    db_manager = context.db_manager
 
     configure_logging(settings.log_level)
     logger.info("BABY observability API starting up")
@@ -67,7 +72,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     # calls a model (workers register their own). Without credentials nothing is registered.
     from baby.providers.registry import register_configured_providers
 
-    register_configured_providers()
+    register_configured_providers(context.provider_registry)
 
     # 2. Initialize database schema if SQLite persistence is enabled
     if getattr(settings, "persistence_backend", "sqlite") == "sqlite":
@@ -80,10 +85,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     previous_audit_backend = None
     audit_backend_attached = False
     if settings.persistence_backend == "sqlite" and settings.audit_storage_type == "sqlite":
-        from baby.audit import audit_log
         from baby.persistence.sqlite_audit import SQLiteAuditLog
 
-        previous_audit_backend = audit_log.use_backend(SQLiteAuditLog(db_manager))
+        previous_audit_backend = context.audit_log.use_backend(SQLiteAuditLog(db_manager))
         audit_backend_attached = True
 
     # 3. Recover stale work (fail closed, never replayed):
@@ -93,7 +97,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     if task_tracker.store is not None:
         from baby.workers.recovery import WorkerRecovery
 
-        lease_report = WorkerRecovery(task_store=task_tracker.store).recover()
+        lease_report = WorkerRecovery(task_store=task_tracker.store, audit=context.audit_log).recover()
         if lease_report.changed:
             logger.warning(
                 "Recovered lost worker leases at startup",
@@ -138,9 +142,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             logger.info("Worker stopped on shutdown", worker_id=worker.worker_id)
 
     if audit_backend_attached:
-        from baby.audit import audit_log
-
-        audit_log.use_backend(previous_audit_backend)
+        context.audit_log.use_backend(previous_audit_backend)
 
     # Close database connections cleanly
     try:

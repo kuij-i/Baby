@@ -1,7 +1,7 @@
 """Tool executor with permission and timeout enforcement."""
 
 import asyncio
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from baby.audit import audit_log
 from baby.core import AgentId, AuditEventType, PermissionLevel, TaskId
@@ -11,11 +11,51 @@ from baby.permissions import permission_manager
 from baby.permissions.approvals import approval_service
 from baby.tools.base import Tool, ToolResult
 
+if TYPE_CHECKING:
+    from baby.audit import AuditLog
+    from baby.permissions.approvals import ApprovalService
+    from baby.permissions.manager import PermissionManager
+
 logger = get_logger(__name__)
 
 
 class ToolExecutor:
     """Executes tools with permission checks, timeouts, and audit logging."""
+
+    def __init__(
+        self,
+        *,
+        permissions: Optional["PermissionManager"] = None,
+        audit: Optional["AuditLog"] = None,
+        approvals: Optional["ApprovalService"] = None,
+    ) -> None:
+        """Initialize the executor.
+
+        Each dependency defaults to the process-wide singleton, resolved when it is used.
+
+        Args:
+            permissions: Permission manager consulted for every required permission.
+            audit: Audit log that records permission checks, invocations and results.
+            approvals: Approval service for APPROVAL_REQUIRED permissions.
+        """
+        self._permissions = permissions
+        self._audit = audit
+        self._approvals = approvals
+
+    @property
+    def permissions(self) -> "PermissionManager":
+        """Permission manager in use."""
+        return self._permissions if self._permissions is not None else permission_manager
+
+    @property
+    def audit(self) -> "AuditLog":
+        """Audit log in use."""
+        return self._audit if self._audit is not None else audit_log
+
+    @property
+    def approvals(self) -> "ApprovalService":
+        """Approval service in use."""
+        return self._approvals if self._approvals is not None else approval_service
 
     async def execute(
         self,
@@ -56,12 +96,12 @@ class ToolExecutor:
             # 2. Check permissions
             for required_perm in tool.permissions_required:
                 try:
-                    level = permission_manager.check_permission(agent_id_str, required_perm)
+                    level = self.permissions.check_permission(agent_id_str, required_perm)
                     if level == PermissionLevel.APPROVAL_REQUIRED:
                         # Only an admin-granted, unconsumed approval bound to this exact task,
                         # engagement and operation (tool + agent + permission + arguments)
                         # lets execution proceed; it is consumed atomically (single use).
-                        granted = approval_service.authorize_or_request(
+                        granted = self.approvals.authorize_or_request(
                             task_id=task_id,
                             agent_id=agent_id,
                             engagement_id=user_id,
@@ -71,7 +111,7 @@ class ToolExecutor:
                             reason=f"Tool '{tool.name}' requires approval for '{required_perm.category.value}'",
                         )
                         if granted:
-                            audit_log.record(
+                            self.audit.record(
                                 AuditEventType.APPROVAL_GRANTED,
                                 task_id=task_id,
                                 agent_id=agent_id,
@@ -89,7 +129,7 @@ class ToolExecutor:
                             agent_id=agent_id_str,
                             permission=required_perm.category.value,
                         )
-                        audit_log.record(
+                        self.audit.record(
                             AuditEventType.APPROVAL_REQUESTED,
                             task_id=task_id,
                             agent_id=agent_id,
@@ -120,7 +160,7 @@ class ToolExecutor:
                         agent_id=agent_id_str,
                         error=str(e),
                     )
-                    audit_log.record(
+                    self.audit.record(
                         AuditEventType.PERMISSION_CHECKED,
                         task_id=task_id,
                         agent_id=agent_id,
@@ -135,7 +175,7 @@ class ToolExecutor:
                     raise
 
             # 3. Record tool invocation
-            audit_log.record(
+            self.audit.record(
                 AuditEventType.TOOL_INVOKED,
                 task_id=task_id,
                 agent_id=agent_id,
@@ -159,7 +199,7 @@ class ToolExecutor:
                 )
 
             # 5. Record tool result
-            audit_log.record(
+            self.audit.record(
                 AuditEventType.TOOL_RESULT,
                 task_id=task_id,
                 agent_id=agent_id,

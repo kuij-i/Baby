@@ -4,7 +4,7 @@ Coordinates task planning, agent selection, execution, verification, and audit
 logging while keeping execution bounded and deterministic.
 """
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from baby.agents import agent_registry
 from baby.audit import audit_log
@@ -15,6 +15,14 @@ from baby.observability import task_tracker
 from baby.observability.redaction import redact_sensitive_data
 from baby.planning.planner import task_planner
 from baby.planning.selection import selection_logic
+
+if TYPE_CHECKING:
+    from baby.agents.registry import AgentRegistry
+    from baby.audit import AuditLog
+    from baby.observability.tasks import TaskTracker
+    from baby.permissions.approvals import ApprovalService
+    from baby.planning.planner import TaskPlanner
+    from baby.planning.selection import SelectionLogic
 
 logger = get_logger(__name__)
 
@@ -45,6 +53,70 @@ def _plan_created_details(plan: Plan) -> Dict[str, Any]:
 class Orchestrator:
     """Orchestrate task planning and bounded agent execution."""
 
+    def __init__(
+        self,
+        *,
+        task_tracker: Optional["TaskTracker"] = None,
+        audit: Optional["AuditLog"] = None,
+        planner: Optional["TaskPlanner"] = None,
+        selection: Optional["SelectionLogic"] = None,
+        agents: Optional["AgentRegistry"] = None,
+        approvals: Optional["ApprovalService"] = None,
+    ) -> None:
+        """Initialize the orchestrator.
+
+        Each dependency defaults to the process-wide singleton, resolved when it is used (so a
+        ``BabyContext`` can wire its own services while existing call sites keep working).
+
+        Args:
+            task_tracker: Task state tracker.
+            audit: Audit log.
+            planner: Task planner.
+            selection: Agent selection logic.
+            agents: Agent registry steps are dispatched to.
+            approvals: Approval service for plan approvals.
+        """
+        self._task_tracker = task_tracker
+        self._audit = audit
+        self._planner = planner
+        self._selection = selection
+        self._agents = agents
+        self._approvals = approvals
+
+    @property
+    def task_tracker(self) -> "TaskTracker":
+        """Task tracker in use."""
+        return self._task_tracker if self._task_tracker is not None else task_tracker
+
+    @property
+    def audit(self) -> "AuditLog":
+        """Audit log in use."""
+        return self._audit if self._audit is not None else audit_log
+
+    @property
+    def planner(self) -> "TaskPlanner":
+        """Task planner in use."""
+        return self._planner if self._planner is not None else task_planner
+
+    @property
+    def selection(self) -> "SelectionLogic":
+        """Selection logic in use."""
+        return self._selection if self._selection is not None else selection_logic
+
+    @property
+    def agents(self) -> "AgentRegistry":
+        """Agent registry in use."""
+        return self._agents if self._agents is not None else agent_registry
+
+    @property
+    def approvals(self) -> "ApprovalService":
+        """Approval service in use."""
+        if self._approvals is not None:
+            return self._approvals
+        from baby.permissions.approvals import approval_service
+
+        return approval_service
+
     async def execute_task(
         self,
         task: Task,
@@ -56,8 +128,8 @@ class Orchestrator:
             task.user_id = user_id
 
         # Register as PENDING first, then transition to IN_PROGRESS following the state machine
-        task_tracker.register_task(task, status=TaskStatus.PENDING)
-        task_tracker.update_status(task.id, TaskStatus.IN_PROGRESS)
+        self.task_tracker.register_task(task, status=TaskStatus.PENDING)
+        self.task_tracker.update_status(task.id, TaskStatus.IN_PROGRESS)
 
         logger.info(
             "Starting task execution",
@@ -65,7 +137,7 @@ class Orchestrator:
             title=task.title,
             priority=task.priority,
         )
-        audit_log.record(
+        self.audit.record(
             AuditEventType.TASK_CREATED,
             task_id=task.id,
             user_id=user_id or task.user_id,
@@ -77,9 +149,9 @@ class Orchestrator:
         )
 
         try:
-            plan = await task_planner.plan(task)
-            task_tracker.set_plan(task.id, plan)
-            audit_log.record(
+            plan = await self.planner.plan(task)
+            self.task_tracker.set_plan(task.id, plan)
+            self.audit.record(
                 AuditEventType.PLAN_CREATED,
                 task_id=task.id,
                 user_id=user_id or task.user_id,
@@ -88,14 +160,14 @@ class Orchestrator:
 
             result = await self._run_steps(plan, task, user_id or task.user_id)
             if result is not None and not result.success:
-                task_tracker.update_status(
+                self.task_tracker.update_status(
                     task.id,
                     TaskStatus.FAILED,
                     error=result.error,
                     result=result,
                     agent_id=result.agent_id,
                 )
-                audit_log.record(
+                self.audit.record(
                     AuditEventType.TASK_FAILED,
                     task_id=task.id,
                     user_id=user_id or task.user_id,
@@ -103,13 +175,13 @@ class Orchestrator:
                 )
                 return result
 
-            task_tracker.update_status(
+            self.task_tracker.update_status(
                 task.id,
                 TaskStatus.COMPLETED,
                 result=result,
                 agent_id=result.agent_id if result else None,
             )
-            audit_log.record(
+            self.audit.record(
                 AuditEventType.TASK_COMPLETED,
                 task_id=task.id,
                 user_id=user_id or task.user_id,
@@ -124,13 +196,13 @@ class Orchestrator:
             )
             raise
         except Exception as exc:
-            task_tracker.update_status(
+            self.task_tracker.update_status(
                 task.id,
                 TaskStatus.FAILED,
                 error=str(exc),
             )
             logger.error("Task execution failed", exc=exc, task_id=str(task.id))
-            audit_log.record(
+            self.audit.record(
                 AuditEventType.ERROR,
                 task_id=task.id,
                 user_id=user_id or task.user_id,
@@ -155,13 +227,11 @@ class Orchestrator:
         approval request is recorded and a failed result is returned before any step runs;
         the worker then parks the task in AWAITING_APPROVAL.
         """
-        from baby.permissions.approvals import approval_service
-
         user_id = task.user_id
         plan = await self._stored_or_new_plan(task)
 
         if plan_requires_approval(plan):
-            granted = approval_service.authorize_or_request(
+            granted = self.approvals.authorize_or_request(
                 task_id=task.id,
                 agent_id=ORCHESTRATOR_AGENT_ID,
                 engagement_id=user_id,
@@ -170,7 +240,7 @@ class Orchestrator:
                 arguments=plan_approval_arguments(plan, task.priority),
                 reason=f"Plan with {len(plan.steps)} step(s) requires approval (task priority {task.priority})",
             )
-            audit_log.record(
+            self.audit.record(
                 AuditEventType.APPROVAL_GRANTED if granted else AuditEventType.APPROVAL_REQUESTED,
                 task_id=task.id,
                 user_id=user_id,
@@ -192,16 +262,16 @@ class Orchestrator:
 
     async def _stored_or_new_plan(self, task: Task) -> Plan:
         """Return the task's stored plan, or plan it now and store the plan (first writer wins)."""
-        record = task_tracker.get_task(task.id)
+        record = self.task_tracker.get_task(task.id)
         if record is not None and record.plan is not None:
             logger.info("Reusing stored plan", task_id=str(task.id), step_count=len(record.plan.steps))
             return record.plan
 
-        new_plan = await task_planner.plan(task)
-        stored, created = task_tracker.set_plan_if_absent(task.id, new_plan)
+        new_plan = await self.planner.plan(task)
+        stored, created = self.task_tracker.set_plan_if_absent(task.id, new_plan)
         plan = stored or new_plan
         if created or stored is None:
-            audit_log.record(
+            self.audit.record(
                 AuditEventType.PLAN_CREATED,
                 task_id=task.id,
                 user_id=task.user_id,
@@ -237,7 +307,7 @@ class Orchestrator:
     ) -> AgentResult:
         """Execute one planned step, returning a typed failure when unassigned."""
         del plan  # Reserved for dependency-aware execution in a later phase.
-        agent_spec = await selection_logic.select_agent(step, task)
+        agent_spec = await self.selection.select_agent(step, task)
         if agent_spec is None:
             logger.warning("No enabled agent available", task_id=str(task.id), step_id=step.step_id)
             return AgentResult(
@@ -247,7 +317,7 @@ class Orchestrator:
                 error="No enabled agent available",
             )
 
-        audit_log.record(
+        self.audit.record(
             AuditEventType.AGENT_SELECTED,
             task_id=task.id,
             agent_id=agent_spec.id,
@@ -255,7 +325,7 @@ class Orchestrator:
             details={"step_id": step.step_id},
         )
 
-        agent = agent_registry.get(str(agent_spec.id))
+        agent = self.agents.get(str(agent_spec.id))
         context = ExecutionContext(
             task_id=task.id,
             plan_step=step,
