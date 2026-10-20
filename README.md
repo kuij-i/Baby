@@ -283,8 +283,9 @@ TOKEN=<API_AUTH_TOKEN from .env>
    ```bash
    curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/tasks/<task_id>
    ```
-   `"list files"` completes without a model provider and returns the files under `CODING_REPO_ROOT`. Any other
-   description fails with `No model provider is configured` until a model key is set (see below), and a
+   `"list files"` completes without a model provider and returns the files under `CODING_REPO_ROOT` (so do
+   `"ls src"` and `"list files in src"`). Any other description — including ones that merely mention
+   listing, like `"list the bugs in auth.py"` — fails with `No model provider is configured` until a model key is set (see below), and a
    task with `priority` ≥ 8 waits in `awaiting_approval` until an admin approves it (see *Approval Lifecycle*).
 
 ---
@@ -345,7 +346,8 @@ Baby uses SQLite with WAL mode (`baby.db`, `baby.db-wal`, `baby.db-shm`).
 
 A model provider lets workers run the CodingAgent's bounded model loop (the model reads and lists
 files through the permission-checked tools; writes still need admin approval). Without a key,
-workers only run explicit tool steps and "list files" requests; any other task is recorded as
+workers only run explicit tool steps and explicit file-listing requests (`ls [path]`, `list files [in <path>]`,
+`list the directory`, optionally with JSON args such as `list files {"path": "src"}`); any other task is recorded as
 **FAILED** with `No model provider is configured` — Baby never reports work as completed when
 nothing was executed.
 
