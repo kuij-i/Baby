@@ -9,6 +9,7 @@ Covers:
 - Multi-step plans run in order and stop at the first failed step, naming it.
 """
 
+import importlib
 import json
 from pathlib import Path
 from typing import Any, List, Optional
@@ -142,7 +143,10 @@ def _steps_json(*descriptions: str) -> str:
 def _model_planner(provider: PlanProvider) -> Any:
     """Patch the orchestrator to plan with ``provider`` in model mode."""
     planner = TaskPlanner(model_planner=ModelPlanner(provider=provider))
-    return patch("baby.orchestration.orchestrator.task_planner", planner)
+    # Patch the module object, not a dotted path: ``baby.orchestration`` re-exports the
+    # ``orchestrator`` instance under the submodule's name, and Python 3.10's mock resolves
+    # dotted paths with getattr, so the string form would target the instance.
+    return patch.object(importlib.import_module("baby.orchestration.orchestrator"), "task_planner", planner)
 
 
 def _runtime() -> WorkerRuntime:
